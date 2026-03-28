@@ -1,0 +1,5 @@
+.env
+grpo_saved_lora/
+outputs/
+successful_strategies/
+backtest_plot_*.png

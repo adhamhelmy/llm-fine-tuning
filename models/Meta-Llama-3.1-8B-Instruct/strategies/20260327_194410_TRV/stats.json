@@ -1,0 +1,9 @@
+{
+  "symbol": "TRV",
+  "start": "2016-01-01",
+  "end": "2024-12-31",
+  "return_pct": 39.1636,
+  "sharpe_ratio": 0.2755,
+  "avg_annual_return_pct": 4.5803,
+  "max_drawdown_pct": 24.128
+}

@@ -1,0 +1,9 @@
+{
+  "symbol": "AAPL",
+  "start": "2016-01-01",
+  "end": "2024-12-31",
+  "return_pct": 361.0328,
+  "sharpe_ratio": 0.6903,
+  "avg_annual_return_pct": 22.3608,
+  "max_drawdown_pct": 45.6748
+}

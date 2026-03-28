@@ -1,0 +1,9 @@
+{
+  "symbol": "NKE",
+  "start": "2016-01-01",
+  "end": "2024-12-31",
+  "return_pct": 0.4101,
+  "sharpe_ratio": -4.1652,
+  "avg_annual_return_pct": 0.0457,
+  "max_drawdown_pct": 0.8623
+}

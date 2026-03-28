@@ -1,0 +1,9 @@
+{
+  "symbol": "MMM",
+  "start": "2016-01-01",
+  "end": "2024-12-31",
+  "return_pct": 6.0139,
+  "sharpe_ratio": -0.1469,
+  "avg_annual_return_pct": 0.675,
+  "max_drawdown_pct": 7.5367
+}
