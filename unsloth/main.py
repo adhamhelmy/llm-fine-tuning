@@ -1,4 +1,7 @@
 # unsloth
+import random
+from turtle import pd
+
 import torch
 from unsloth import FastVisionModel
 from transformers import TextStreamer
@@ -112,12 +115,12 @@ class Unsloth:
             temperature=1.0,
             learning_rate=5e-6,
             weight_decay=0.01,
-            warmup_ratio=0.1,
+            warmup_steps=max(1, int(0.1 * steps)),
             lr_scheduler_type="linear",
             optim="adamw_8bit",
             logging_steps=1,
             per_device_train_batch_size=1,
-            gradient_accumulation_steps=4,
+            gradient_accumulation_steps=8,
             num_generations=2,
             max_prompt_length=max_prompt_length,
             max_completion_length=max_completion_length,
@@ -126,6 +129,9 @@ class Unsloth:
             report_to="none",
             output_dir="outputs",
         )
+
+        self.model.generation_config.pad_token_id = self.tokenizer.pad_token_id
+        self.model.generation_config.max_length = None
 
         trainer = GRPOTrainer(
             model=self.model,
@@ -263,12 +269,14 @@ class Backtrader:
 
 class Data:
     SYMBOLS = [
-        'AAPL', 'AMGN', 'AXP', 'BA',  'CAT',
-        'CRM',  'CSCO', 'CVX', 'DIS', 'DOW',
-        'GS',   'HD',   'HON', 'IBM', 'JNJ',
-        'JPM',  'KO',   'MCD', 'MMM', 'MRK',
-        'MSFT', 'NKE',  'NVDA', 'PG',  'TRV',
-        'UNH',  'V',    'VZ',  'WBA', 'WMT',
+        'AAPL', 'AMGN', 'AXP',  'BA',   'CAT',
+        'CRM',  'CSCO', 'CVX',  'DIS',  'DOW',
+        'GS',   'HD',   'HON',  'IBM',  'JNJ',
+        'JPM',  'KO',   'MCD',  'MMM',  'MRK',
+        'MSFT', 'NKE',  'NVDA', 'PG',   'TRV',
+        'UNH',  'V',    'VZ',   'WBA',  'WMT',
+        'AMZN', 'COIN', 'GE',   'GOOGL','NFLX',
+        'NIO',  'TSLA', 'UVV',
     ]
     START = '2016-01-01'
     END   = '2024-12-31'
@@ -476,17 +484,106 @@ def run_strategy(strategy_file, symbols=None, start=None, end=None, cash=10000):
     end     = end     or Data.END
     return Backtrader().run_strategy_from_file(strategy_file, symbols, start, end, cash=cash)
 
+def test(model_name, samples=10):
+    results = []
+    data = Data()   
+    model = Unsloth(model_name=model_name, max_seq_length=1024)
+
+    for i in range(samples):
+        symbol = random.choice(Data.SYMBOLS)
+        print(f"\n{'='*50}")
+        print(f"Sample {i+1}/{samples} | {symbol}  {Data.START} → {Data.END}")
+
+        prompt = Data()._make_prompt(symbol)
+        raw  = model.generate(prompt)
+        func = RewardFunctions.extract_function(raw)
+
+        record = {
+            "sample": i + 1, "symbol": symbol,
+            "code": func, "status": None,
+            "return_pct": None, "sharpe_ratio": None,
+            "avg_annual_return_pct": None, "max_drawdown_pct": None,
+        }
+
+        # validate structure first (cheaper), then safety
+        if not RewardFunctions.has_required_functions(code):
+            print("FAIL: missing __init__ or next")
+            record["status"] = "missing_methods"
+            results.append(record)
+            continue
+
+        if not RewardFunctions.function_works(code):
+            print("FAIL: invalid/unsafe code")
+            record["status"] = "invalid_code"
+            results.append(record)
+            continue
+
+        try:
+            score = RewardFunctions.strategy_succeeds([[{"content": func}]], prompts=[prompt])[0]
+
+            if score == -10:
+                print("FAIL: missing __init__ or next")
+                record["status"] = "missing_methods"
+                results.append(record)
+                continue
+            elif score == -3:
+                print("FAIL: invalid/unsafe code")
+                record["status"] = "invalid_code"
+                results.append(record)
+                continue
+            elif score == -1:
+                print("FAIL: no trades")
+                record["status"] = "no_trades"
+            else:
+                record["status"] = "ok"
+                if score > 0:
+                    RewardFunctions.save_strategy(func, return_pct, sharpe_ratio, avg_annual_return, max_drawdown, symbol, Data.START, Data.END)
+
+            record.update({
+                "return_pct": return_pct, "sharpe_ratio": sharpe_ratio,
+                "avg_annual_return_pct": avg_annual_return, "max_drawdown_pct": max_drawdown,
+            })
+
+        except TimeoutError:
+            print("FAIL: timeout")
+            record["status"] = "timeout"
+        except Exception as e:
+            print(f"FAIL: exception — {str(e)[:120]}")
+            record["status"] = "exception"
+
+        results.append(record)
+
+    print("\nDone.")
+
+    df = pd.DataFrame(results)
+
+    print("=== Status breakdown ===")
+    print(df["status"].value_counts().to_string())
+
+    ok = df[df["status"] == "ok"]
+    print(f"\nStrategies that ran:    {len(df[df['status'].isin(['ok','no_trades'])])}/{samples}")
+    print(f"Strategies that traded: {len(ok)}/{samples}")
+
+    if len(ok) > 0:
+        print("\n=== Stats (strategies that traded) ===")
+        metrics = ["return_pct", "avg_annual_return_pct", "sharpe_ratio", "max_drawdown_pct"]
+        print(ok[metrics].describe().to_string())
+        print(f"\nPositive-return rate:   {(ok['return_pct'] > 0).mean():.1%}")
+
+    df.drop(columns=["code"], errors="ignore")
+
+    # Save results
+    model_short = model_name.split('/')[-1]
+    save_dir = f"models/{model_short}"
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = f"{save_dir}/Summary.csv"
+    df.drop(columns=["code"], errors="ignore").to_csv(save_path, index=False)
+    print(f"\nSaved to {save_path}")
 
 def main():
-    unsloth = Unsloth(
-        model_name="unsloth/Ministral-3-3B-Instruct-2512",
-        lora_rank=16,
-        max_seq_length=1024,
-        load_in_4bit=True,
-        fast_inference=False,
-    )
     data = Data()
-    unsloth.train(
+    model = Unsloth(model_name="unsloth/Ministral-3-3B-Instruct-2512", max_seq_length=1024)
+    model.train(
         steps=100,
         reward_functions=[RewardFunctions.strategy_succeeds],
         dataset=data.get_dataset(),
