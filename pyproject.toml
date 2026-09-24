@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trading-rl"
+version = "0.1.0"
+description = "Shared backtesting, prompt and reward code for GRPO-tuning LLMs to write Backtrader strategies"
+requires-python = ">=3.10"
+dependencies = [
+    "backtrader",
+    "alpaca-trade-api",
+    "pandas",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+# GPU training / inference (trading_rl.model, trading_rl.dataset)
+train = ["unsloth", "trl==0.22.2", "datasets", "peft", "plotly"]
+
+[tool.setuptools]
+packages = ["trading_rl"]
