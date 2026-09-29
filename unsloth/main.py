@@ -14,8 +14,8 @@ from trading_rl.model import Unsloth  # import first: unsloth must load before t
 
 import pandas as pd
 
-from trading_rl import (TRAIN_END, TRAIN_START, TRAINING_SYMBOLS, Backtester, evaluate_sample,
-                        make_strategy_reward, summarize)
+from trading_rl import (TEST_END, TEST_START, TRAIN_END, TRAIN_START, TRAINING_SYMBOLS, Backtester,
+                        evaluate_sample, make_strategy_reward, summarize)
 from trading_rl.dataset import build_dataset
 
 HF_TOKEN = os.environ.get('HF_TOKEN', '')
@@ -24,17 +24,18 @@ ALPACA_SECRET_KEY = os.environ.get('ALPACA_SECRET_KEY', '')
 
 
 def test(model_name, samples=10, lora_adapter_path=None):
-    """Generate `samples` strategies with `model_name`, backtest them, and save a summary CSV."""
+    """Generate `samples` strategies with `model_name`, backtest them on the held-out TEST window,
+    and save a summary CSV. (For the paper's ablations use unsloth/ladder_ablation.ipynb.)"""
     backtester = Backtester(ALPACA_API_KEY, ALPACA_SECRET_KEY)
-    backtester.load_bars(TRAINING_SYMBOLS, TRAIN_START, TRAIN_END)
+    backtester.load_bars(TRAINING_SYMBOLS, TEST_START, TEST_END)
     model = Unsloth(model_name=model_name, max_seq_length=1024,
                     lora_adapter_path=lora_adapter_path, adapter_trainable=False, hf_token=HF_TOKEN)
 
     results = []
     for i in range(samples):
         symbol = random.choice(TRAINING_SYMBOLS)
-        print(f"\n{'='*50}\nSample {i+1}/{samples} | {symbol}  {TRAIN_START} → {TRAIN_END}")
-        rec = evaluate_sample(model.generate, backtester, symbol, TRAIN_START, TRAIN_END,
+        print(f"\n{'='*50}\nSample {i+1}/{samples} | {symbol}  {TEST_START} → {TEST_END}")
+        rec = evaluate_sample(model.generate, backtester, symbol, TEST_START, TEST_END,
                               save_dir="successful_strategies")
         rec['sample'] = i + 1
         print(f"{rec['status']} (reward={rec['reward_score']})")

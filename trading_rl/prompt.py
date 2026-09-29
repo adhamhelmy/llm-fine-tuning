@@ -43,16 +43,34 @@ _COMPACT_FOOTER = "Return ONLY the Python class. DO NOT output anything else."
 _PARAMS_RE = re.compile(r'trading strategy for (\w+) from (\S+) to (\S+)')
 
 
-def make_prompt(symbol: str, start: str, end: str, compact: bool = False) -> str:
+PLAN_INSTRUCTION = """\
+REASONING:
+Before the code, think step by step inside <think></think> tags: which market behaviour you
+want to exploit, which Backtrader indicators and parameters implement it, and how to avoid
+runtime errors. The <think> block is discarded. After it, output only the class."""
+
+ANONYMOUS_HEADER = ("Create a trading strategy for a US-listed stock, backtested on daily bars over "
+                    "several years, that is fully compatible with the following backtesting setup:")
+
+
+def make_prompt(symbol: str, start: str, end: str, compact: bool = False,
+                sections=(), plan: bool = False, anonymize: bool = False) -> str:
     """Build the strategy prompt.
 
     compact=False: full prompt incl. the class skeleton (used for GRPO training).
     compact=True:  same rules without the skeleton (used by the model-comparison notebooks).
+    sections:      extra context blocks (API reference, market summary, retrieved docs,
+                   examples), inserted between the rules and the output format.
+    plan:          ask for <think> reasoning before the code (stripped by extract_function).
+    anonymize:     hide ticker and dates (memorization probe; evaluation only, since the
+                   GRPO reward parses symbol/dates from the prompt header).
     """
-    header = (f"Create a trading strategy for {symbol} from {start} to {end} "
-              "that is fully compatible with the following backtesting setup:")
+    header = ANONYMOUS_HEADER if anonymize else (
+        f"Create a trading strategy for {symbol} from {start} to {end} "
+        "that is fully compatible with the following backtesting setup:")
     footer = _COMPACT_FOOTER if compact else _TEMPLATE
-    return f"{header}\n\n{_RULES}\n\n{footer}"
+    parts = [header, _RULES, *[s for s in sections if s], PLAN_INSTRUCTION if plan else None, footer]
+    return "\n\n".join(p for p in parts if p)
 
 
 def extract_trading_parameters(prompt: str):

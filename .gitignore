@@ -22,3 +22,4 @@ backtest_plot_*.png
 model_comparison_results*.csv
 model_comparison_strategies/
 strategy_benchmark_results.csv
+ladder_results/

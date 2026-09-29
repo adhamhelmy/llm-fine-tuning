@@ -10,12 +10,16 @@ This repo fine-tunes LLMs with reinforcement learning (GRPO) so they write profi
 
 ```
 trading_rl/                    # Shared package — ALL backtest / prompt / reward logic lives here
-  config.py                    #   symbol universes, training date range, Alpaca URL
-  prompt.py                    #   make_prompt(symbol, start, end, compact=False)
+  config.py                    #   symbol universes, train/dev/test splits, Alpaca URL
+  prompt.py                    #   make_prompt(symbol, start, end, compact, sections, plan, anonymize)
+  context.py                   #   API reference, pre-window market stats, few-shot examples
+  knowledge.py                 #   financial RAG: strategy corpus + BM25 KnowledgeBase
   codegen.py                   #   extract / validate / exec generated Strategy code
   backtest.py                  #   Backtester (Alpaca bars + cerebro), BacktestResult, timeouts
   rewards.py                   #   reward ladder, score_strategy, make_strategy_reward, save_strategy
   evaluate.py                  #   evaluate_sample / evaluate_symbol / summarize (model-agnostic)
+  baselines.py                 #   buy-and-hold / SMA 50-200 through the same backtester
+  ladder.py                    #   LLM-engineering ladder: LadderConfig, stages, pipeline, stats
   dataset.py                   #   build_dataset() for GRPO
   model.py                     #   Unsloth wrapper (GPU only; not imported by trading_rl/__init__)
 pyproject.toml                 # makes trading_rl pip-installable; [train] extra = GPU deps
@@ -29,10 +33,12 @@ unsloth/
   model_comparison_mlx.ipynb   # same, on Apple Silicon via mlx-lm
   convert_lora_adapters.ipynb  # PEFT adapters → MLX format (run before the MLX comparison)
   strategy_benchmark.ipynb     # re-backtest best strategies from model_comparison_results*.csv
+  ladder_ablation.ipynb        # paper experiments: stage-wise ablation (ollama / mlx / unsloth)
 strategies/
   tester.py                    # CLI backtester for hand-written strategies in this folder
   dow30_momentum.py, day_trading_orb.py
 models/<model>/Summary.csv     # saved evaluation results per model
+docs/paper/                    # revised methodology, reviewer response, appendix prompts
 docs/superpowers/              # design spec + plan for the day_trading_orb strategy
 remote-server.md               # university GPU server setup notes
 ```
@@ -47,7 +53,7 @@ remote-server.md               # university GPU server setup notes
 - **Hand-written strategies**: `cd strategies && python tester.py dow30_momentum --symbols dow30 --interval day`
 
 There is no test suite. Offline tooling lives in `.pi/skills/`. The scripts are plain Python, so any agent can run them:
-- `trading-rl-smoke-test/`: `scripts/smoke.py` exercises every reward path using synthetic Alpaca bars. `scripts/run_notebook.py` runs CPU notebooks end to end with Alpaca and Ollama stubbed.
+- `trading-rl-smoke-test/`: `scripts/smoke.py` exercises every reward path and the ladder (including the leakage assertions) using synthetic Alpaca bars. `scripts/run_notebook.py` runs CPU notebooks end to end with Alpaca and Ollama stubbed.
 - `notebook-editing/`: `nbedit.py` makes asserting, minimal-diff notebook edits; `nb_dump.py` prints readable cells; `nb_lint.py` checks JSON, outputs, secrets and pyflakes. Read its SKILL.md before touching any `.ipynb`.
 
 Anything in `trading_rl.model` needs CUDA and cannot run on a Mac.
@@ -78,6 +84,19 @@ Alpaca (historical bars only; paper endpoint `https://paper-api.alpaca.markets`)
    Both GRPO training (`make_strategy_reward`) and every evaluation path use this same function, so statuses and rewards stay consistent.
 4. `make_strategy_reward(backtester, save_dir=...)` wraps it in TRL's reward signature. Each completion is scored on the symbol/date range parsed from its prompt, and profitable strategies can be saved (`strategy.py`, `stats.json`, `plot_*.png`).
 
+### LLM-engineering ladder (the paper's methodology; see docs/paper/methodology.md)
+
+- `LadderConfig` = one generation setting. Its fields are grouped by stage: prompt (`compact`, `examples`, `plan`, `anonymize`), context (`api_reference`, `market_summary`, `rag_k`), harness (`repair_rounds`), loop (`refine_rounds`) and graph (`analyst`). `cfg.name` lists the non-default fields and is the key stored in result CSVs.
+- `STAGES` / `stage_configs(stage, best)`: greedy stage-wise selection. Stages are selected on **DEV**, and **TEST** is used only for the final rungs.
+- **Leakage rules, which must hold for any change:**
+  - repair/refine feedback and market stats use only `feedback_window(start)`, i.e. the 2 years before the evaluated window;
+  - the evaluated window is backtested once per sample;
+  - the RAG corpus contains no dated facts.
+  The smoke test asserts all of these.
+- `generate_strategy` runs one sample through the whole pipeline. `run_ablation` is resumable and appends to a CSV. `report` gives rates over *all* samples with Wilson CIs. `paired_delta` is a symbol-level bootstrap. `dump_prompts` writes the exact prompts for the paper appendix.
+- **GRPO with the selected prompt:** `build_dataset(..., prompt_fn=ladder.prompt_fn(best, backtester))`. The prompt header must stay first because the reward parses symbol/dates from it, so `anonymize` is evaluation-only.
+- `LadderConfig()` must render exactly `make_prompt(...)`, the original training prompt. Don't change `prompt._RULES`/`_TEMPLATE` without a new config flag; that would silently change the baseline.
+
 ### Backtester
 
 - The bar cache (`Backtester._cache`) is class-level, so every instance shares it. Call `load_bars(symbols, start, end)` once up front; training then never hits Alpaca.
@@ -94,7 +113,7 @@ Alpaca (historical bars only; paper endpoint `https://paper-api.alpaca.markets`)
 - `train()` defaults: lr 5e-6, `num_generations=2`, batch 1 × grad-accum 8, `adamw_8bit`. Override any `GRPOConfig` field through `**grpo_overrides`. It can push to the HF Hub (`hub_strategy="checkpoint"` makes interrupted runs resumable), and saves the adapter to `grpo_saved_lora/`.
 - `generate()` decodes only the new tokens. Decoding the prompt too would let the extractor match the class skeleton inside the prompt.
 - Dataset: one prompt per symbol in `TRAINING_SYMBOLS` (38 US equities).
-- Date ranges: `config.TRAIN_START/END` is 2016–2024, but `strategy_generator.ipynb` overrides it to 2012–2021 so that 2022+ stays held out for evaluation.
+- Date ranges: `config` defines train 2016–2019, dev 2020–2021 and test 2022–2024 (no overlap). `strategy_generator.ipynb` still overrides train to 2012–2021, which overlaps dev.
 - Models used so far: Ministral 3 (3B/8B/14B), Qwen2.5-Coder (7B/14B/32B), Llama 3.1 8B, DeepSeek-R1-Distill-Qwen-14B.
 
 ### Evaluation
@@ -107,4 +126,4 @@ Alpaca (historical bars only; paper endpoint `https://paper-api.alpaca.markets`)
 
 ## Generated artifacts (gitignored)
 
-`outputs/`, `grpo_saved_lora/`, `successful_strategies/`, `mlx_adapters/`, `mlx_models/`, `backtest_plot_*.png`, `model_comparison_results*.csv`, `model_comparison_strategies/`, `strategy_benchmark_results.csv`, `.env`.
+`ladder_results/`, `outputs/`, `grpo_saved_lora/`, `successful_strategies/`, `mlx_adapters/`, `mlx_models/`, `backtest_plot_*.png`, `model_comparison_results*.csv`, `model_comparison_strategies/`, `strategy_benchmark_results.csv`, `.env`.

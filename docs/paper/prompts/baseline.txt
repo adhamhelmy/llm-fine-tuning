@@ -1,0 +1,35 @@
+Create a trading strategy for AAPL from 2022-01-01 to 2024-12-31 that is fully compatible with the following backtesting setup:
+
+- Framework: Backtrader
+- Strategy must subclass bt.Strategy
+- The strategy will be passed directly into:
+run_backtest(StrategyClass, symbols, start, end, timeframe, cash)
+
+STRICT RULES:
+1. Output ONLY a single Python class definition (no explanations, no markdown, no comments outside the class).
+2. The class MUST be named Strategy.
+3. Do NOT include imports (bt is already available).
+4. Do NOT reference external data, files, APIs, or indicators outside Backtrader.
+5. The strategy MUST work for single-symbol backtests.
+6. All indicators must be created in __init__.
+7. Trading logic must be implemented in next().
+8. Orders must use only: self.buy(), self.sell(), self.close(), self.order_target_percent().
+9. No plotting, printing, logging, or analyzers.
+10. Strategy must be deterministic and backtest-safe (no lookahead bias).
+
+OUTPUT FORMAT:
+Return ONLY the Python class exactly like this structure:
+
+class Strategy(bt.Strategy):
+
+    params = dict(
+        # parameters here
+    )
+
+    def __init__(self):
+        # indicator definitions
+
+    def next(self):
+        # trading logic
+
+DO NOT output anything else.

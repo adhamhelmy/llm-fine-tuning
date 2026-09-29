@@ -34,5 +34,12 @@ SYMBOL_SETS = {
     'training': TRAINING_SYMBOLS,
 }
 
-TRAIN_START = '2016-01-01'
-TRAIN_END = '2024-12-31'
+# Time splits (no overlap). Alpaca daily bars start in 2016.
+#   train: GRPO training windows
+#   dev:   choosing the best option at each ladder stage (prompt, context, harness, ...)
+#   test:  final, reported numbers only; never used for any selection
+# Harness/loop feedback always comes from the FEEDBACK_YEARS before the evaluated window.
+TRAIN_START, TRAIN_END = '2016-01-01', '2019-12-31'
+DEV_START, DEV_END = '2020-01-01', '2021-12-31'
+TEST_START, TEST_END = '2022-01-01', '2024-12-31'
+FEEDBACK_YEARS = 2

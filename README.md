@@ -17,10 +17,11 @@ The model is prompted to write a `class Strategy(bt.Strategy)`. The code is extr
 
 | Path | What |
 |---|---|
-| `trading_rl/` | Shared package: prompt, code extraction, backtester, rewards, evaluation, Unsloth wrapper |
+| `trading_rl/` | Shared package: prompt, context/RAG, code extraction, backtester, rewards, evaluation, ladder ablation, Unsloth wrapper |
 | `unsloth/` | Training (`main.py`, `kaggle_train.py`, `strategy_generator.ipynb`) and evaluation notebooks |
 | `strategies/` | Hand-written strategies + `tester.py` CLI backtester |
 | `models/` | Evaluation summaries per model |
+| `docs/paper/` | Revised methodology (LLM-engineering ladder), reviewer response, appendix prompts |
 
 ## Setup
 
@@ -44,6 +45,11 @@ Credentials are not stored in the repo. Fill in the empty `HF_TOKEN` / `ALPACA_A
 ```bash
 python unsloth/main.py
 ```
+
+**Ablate the LLM-engineering ladder** (paper experiments): `unsloth/ladder_ablation.ipynb` selects the best
+prompt → context (incl. financial RAG) → harness (error repair) → loop (refinement) → graph (analyst/coder)
+configuration on a dev period, then reports every rung on a held-out test period with confidence intervals.
+It supports Ollama, MLX and Unsloth. See `docs/paper/methodology.md`.
 
 **Evaluate** a model by sampling strategies and backtesting them:
 

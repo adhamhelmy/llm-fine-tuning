@@ -10,13 +10,14 @@
 
 import json
 import os
+import traceback
 from datetime import datetime
 from typing import NamedTuple, Optional
 
 from alpaca_trade_api.rest import TimeFrame
 
 from .backtest import BacktestResult, Backtester
-from .codegen import extract_function, extract_strategy, function_works, has_required_functions
+from .codegen import extract_function, extract_strategy, has_required_functions, validate_code
 from .prompt import extract_trading_parameters
 
 REWARDS = {
@@ -41,10 +42,15 @@ class Score(NamedTuple):
 def score_strategy(code, backtester: Backtester, symbol, start, end,
                    timeframe=TimeFrame.Day, cash=10_000, timeout=10) -> Score:
     """Validate and backtest extracted Strategy code, returning its status and reward."""
+    if code is None:
+        return Score('missing_methods', REWARDS['missing_methods'],
+                     error="No `class Strategy(bt.Strategy):` definition found in the output.")
     if not has_required_functions(code):
-        return Score('missing_methods', REWARDS['missing_methods'])
-    if not function_works(code):
-        return Score('invalid_code', REWARDS['invalid_code'])
+        return Score('missing_methods', REWARDS['missing_methods'],
+                     error="The Strategy class must define both __init__(self) and next(self).")
+    invalid = validate_code(code)
+    if invalid:
+        return Score('invalid_code', REWARDS['invalid_code'], error=invalid[:300])
     try:
         strategy = extract_strategy(code)
         result = backtester.run_with_timeout(strategy, symbol, start, end,
@@ -52,13 +58,20 @@ def score_strategy(code, backtester: Backtester, symbol, start, end,
     except TimeoutError:
         return Score('timeout', REWARDS['timeout'], error='timeout')
     except Exception as e:
-        return Score('exception', REWARDS['exception'], error=str(e)[:200])
+        return Score('exception', REWARDS['exception'], error=describe_exception(e))
 
     if not result.traded:
         return Score('no_trades', REWARDS['no_trades'], result)
     if result.return_pct > 0:
         return Score('profitable', max(result.avg_annual_return_pct, 1), result)
     return Score('loss', REWARDS['loss'], result)
+
+
+def describe_exception(e: BaseException) -> str:
+    """'TypeError (line 7): ...' where the line is inside the generated code, if known."""
+    lines = [f.lineno for f in traceback.extract_tb(e.__traceback__) if f.filename == '<string>']
+    loc = f" (line {lines[-1]})" if lines else ""
+    return f"{type(e).__name__}{loc}: {e}"[:300]
 
 
 def save_strategy(code, result: BacktestResult, symbol, start, end,

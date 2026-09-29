@@ -1,0 +1,85 @@
+Create a trading strategy for AAPL from 2022-01-01 to 2024-12-31 that is fully compatible with the following backtesting setup:
+
+- Framework: Backtrader
+- Strategy must subclass bt.Strategy
+- The strategy will be passed directly into:
+run_backtest(StrategyClass, symbols, start, end, timeframe, cash)
+
+STRICT RULES:
+1. Output ONLY a single Python class definition (no explanations, no markdown, no comments outside the class).
+2. The class MUST be named Strategy.
+3. Do NOT include imports (bt is already available).
+4. Do NOT reference external data, files, APIs, or indicators outside Backtrader.
+5. The strategy MUST work for single-symbol backtests.
+6. All indicators must be created in __init__.
+7. Trading logic must be implemented in next().
+8. Orders must use only: self.buy(), self.sell(), self.close(), self.order_target_percent().
+9. No plotting, printing, logging, or analyzers.
+10. Strategy must be deterministic and backtest-safe (no lookahead bias).
+
+BACKTRADER API REFERENCE (backtrader 1.9.78.123):
+INDICATORS (exact names, default params, output lines)
+- bt.indicators.SMA(data, period=30)  -> lines: .sma
+- bt.indicators.EMA(data, period=30)  -> lines: .ema
+- bt.indicators.WMA(data, period=30)  -> lines: .wma
+- bt.indicators.RSI(data, period=14, upperband=70.0, lowerband=30.0, safediv=False, safehigh=100.0, safelow=50.0, lookback=1)  -> lines: .rsi
+- bt.indicators.MACD(data, period_me1=12, period_me2=26, period_signal=9)  -> lines: .macd, .signal
+- bt.indicators.BollingerBands(data, period=20, devfactor=2.0)  -> lines: .mid, .top, .bot
+- bt.indicators.ATR(data, period=14)  -> lines: .atr
+- bt.indicators.Stochastic(data, period=14, period_dfast=3, upperband=80.0, lowerband=20.0, safediv=False, safezero=0.0, period_dslow=3)  -> lines: .percK, .percD
+- bt.indicators.CCI(data, period=20, factor=0.015, upperband=100.0, lowerband=-100.0)  -> lines: .cci
+- bt.indicators.ADX(data, period=14)  -> lines: .adx
+- bt.indicators.CrossOver(data0, data1)  -> lines: .crossover
+- bt.indicators.Highest(data, period=1)  -> lines: .highest
+- bt.indicators.Lowest(data, period=1)  -> lines: .lowest
+- bt.indicators.Momentum(data, period=12)  -> lines: .momentum
+- bt.indicators.ROC(data, period=12)  -> lines: .roc
+- bt.indicators.StdDev(data, period=20, safepow=True)  -> lines: .stddev
+- bt.indicators.WilliamsR(data, period=14, upperband=-20.0, lowerband=-80.0)  -> lines: .percR
+- bt.indicators.ParabolicSAR(data, period=2, af=0.02, afmax=0.2)  -> lines: .psar
+
+DATA ACCESS
+- self.data is the single data feed. Fields: self.data.open/high/low/close/volume.
+- Index lines with [0] (current bar), [-1] (previous bar). Never use [1] (future) or Python slicing.
+- Compare values, not line objects, in next():  `if self.data.close[0] > self.sma[0]:`
+- Crossovers: create `self.cross = bt.indicators.CrossOver(fast, slow)` in __init__, then
+  `self.cross[0] > 0` (up) / `self.cross[0] < 0` (down) in next().
+- Parameters: `params = dict(fast=20, slow=50)` then `self.p.fast` (or self.params.fast).
+
+ORDERS & POSITION
+- self.position.size (0 when flat); `if not self.position:` checks for no position.
+- self.order_target_percent(target=0.95) buys to 95% of equity; target=0.0 exits.
+- self.buy(size=n) / self.sell(size=n) / self.close(). Don't compute sizes from cash
+  unless you guard against size 0.
+- Orders fill on the next bar; track a pending order (`self.order`) if you place several per bar.
+
+COMMON RUNTIME ERRORS TO AVOID
+- No imports (bt is already available; numpy/pandas/talib are NOT).
+- bt.talib.* needs TA-Lib and is NOT available; use bt.indicators.*.
+- Indicators must be created in __init__, never in next().
+- Warm-up is automatic: next() starts once all indicators have enough bars. Do not index further
+  back than your longest indicator period.
+- Don't name attributes after Strategy methods (self.stop, self.start, self.next, self.prenext,
+  self.buy, self.sell, self.close, self.position, self.notify_order): it breaks the backtest.
+  Use names like self.stop_price.
+- Division by zero: guard denominators (e.g. ATR or StdDev can be 0).
+- MACD lines are .macd and .signal; BollingerBands lines are .mid, .top, .bot;
+  Stochastic lines are .percK and .percD. Use the exact line names listed above.
+- Never call self.data.close.get(...) / len(self.data) inside __init__ to make decisions.
+
+OUTPUT FORMAT:
+Return ONLY the Python class exactly like this structure:
+
+class Strategy(bt.Strategy):
+
+    params = dict(
+        # parameters here
+    )
+
+    def __init__(self):
+        # indicator definitions
+
+    def next(self):
+        # trading logic
+
+DO NOT output anything else.

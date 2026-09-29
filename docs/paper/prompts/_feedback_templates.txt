@@ -1,0 +1,24 @@
+=== HARNESS: REPAIR ===
+{prompt}
+
+Your previous answer:
+```python
+{code}
+```
+
+It failed a dry run: {feedback}
+
+Fix the problem and return the complete corrected class only.
+
+=== LOOP: REFINE ===
+{prompt}
+
+Your previous answer:
+```python
+{code}
+```
+
+In-sample dry run ({fstart} to {fend}): {metrics}. Buy-and-hold over the same period:
+{bh_annual:.2f}% average annual return.
+Improve the strategy's risk-adjusted return on unseen future data. Avoid overfitting to this
+period (keep rules simple and parameters conventional). Return the complete class only.

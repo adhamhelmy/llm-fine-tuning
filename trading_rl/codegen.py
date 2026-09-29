@@ -57,12 +57,21 @@ def check_python_modules(code: str):
     return not non_stdlib, {"stdlib": stdlib, "non_stdlib": non_stdlib}
 
 
+def validate_code(code):
+    """None if the code parses and only imports stdlib modules, else a short error message."""
+    if code is None:
+        return "No `class Strategy(bt.Strategy):` definition found in the output."
+    ok, info = check_python_modules(code)
+    if "error" in info:
+        return info["error"]
+    if not ok:
+        return f"Imports are not allowed (bt is already available): {', '.join(info['non_stdlib'])}"
+    return None
+
+
 def function_works(code) -> bool:
     """True if the code parses and only imports stdlib modules."""
-    if code is None:
-        return False
-    ok, info = check_python_modules(code)
-    return ok and "error" not in info
+    return validate_code(code) is None
 
 
 def extract_strategy(code: str):

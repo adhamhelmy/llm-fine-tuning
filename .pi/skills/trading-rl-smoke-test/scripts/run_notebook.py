@@ -6,7 +6,7 @@
 - Runs from a temporary copy of the repo, so the real tree gets no artifacts
   (successful_strategies/, CSVs, PNGs). Pass --keep to print the path and keep it.
 - `%` / `!` magic lines become `pass`, so the notebook runs against the *local* trading_rl.
-- plt.show() is a no-op and IPython's display() prints the object type.
+- plt.show() is a no-op; display() prints the object (IPython is stubbed if not installed).
 - GPU notebooks (unsloth / mlx imports) can't run this way. Lint them with the
   notebook-editing skill's nb_lint.py instead.
 """
@@ -62,7 +62,16 @@ sys.path[:0] = [{work!r}, {HERE!r}]
 import stubs
 stubs.install_fake_bars()
 {'stubs.install_fake_ollama()' if args.ollama else ''}
-def display(x): print('[display]', type(x).__name__)
+def display(x): print('[display]', type(x).__name__); print(x.to_string() if hasattr(x, 'to_string') else x)
+try:
+    import IPython.display as _ipd
+    _ipd.display = display
+except ImportError:                     # stub IPython when it isn't installed
+    import types
+    _ip = types.ModuleType('IPython'); _ipd = types.ModuleType('IPython.display')
+    _ipd.display = display; _ipd.Image = lambda *a, **k: None
+    _ip.display = _ipd; _ip.get_ipython = lambda: None; _ip.version_info = (0, 0)
+    sys.modules.update({{'IPython': _ip, 'IPython.display': _ipd}})
 {args.setup}
 """
 script = os.path.join(work, '_notebook_run.py')

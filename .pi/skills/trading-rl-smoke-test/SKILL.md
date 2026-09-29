@@ -15,7 +15,15 @@ All paths below are relative to this skill directory. Run the commands from the 
 python3 scripts/smoke.py
 ```
 
-It checks every reward status and its reward value, `<think>` stripping, the prompt round-trip, the TRL reward function, the timeout (on the main thread and in a thread), and `evaluate_symbol` + `save_strategy` including `plot_1.png`. It exits 1 if any check fails.
+It checks every reward status and its reward value, `<think>` stripping, the prompt round-trip, the TRL reward function, the timeout (on the main thread and in a thread), and `evaluate_symbol` + `save_strategy` including `plot_1.png`.
+
+For the ladder it checks:
+- the few-shot examples run;
+- repair, refine and the analyst → coder graph, using a scripted fake LLM;
+- **no test leakage**: a spy on `Backtester.run` asserts that feedback uses only the pre-window and that the test window is backtested once;
+- anonymization, `LadderConfig()` == the original prompt, RAG, resumable `run_ablation`, `report` / `paired_delta` / `select_best`, and `dump_prompts`.
+
+It exits 1 if any check fails.
 
 If you change the reward ladder or add a status, update `SAMPLE_OUTPUTS` in `scripts/stubs.py` and the checks in `scripts/smoke.py`.
 
@@ -30,6 +38,16 @@ python3 scripts/run_notebook.py unsloth/strategy_tester_ollama.ipynb --ollama \
 - Magics are dropped, so the notebook imports the **local** `trading_rl`, not the GitHub version.
 - `--replace OLD=>NEW` asserts that `OLD` exists. Use it to shrink sample counts.
 - `strategy_benchmark.ipynb` needs a `model_comparison_results*.csv`. Create one with `--setup`, e.g. write a small DataFrame with columns `model, symbol, status, strategy_code, avg_annual_return_pct, sharpe_ratio` built from `stubs.SAMPLE_OUTPUTS['profitable']` (strip the markdown fence first).
+
+Ladder notebook, tiny config (about 1 min):
+
+```bash
+python3 scripts/run_notebook.py unsloth/ladder_ablation.ipynb --ollama \
+  --replace "MODEL          = 'qwen2.5-coder:7b'=>MODEL          = 'llama3.2:3b'" \
+  --replace "SYMBOLS        = TESTER_SYMBOLS=>SYMBOLS        = TESTER_SYMBOLS[:3]" \
+  --replace "N_SAMPLES_DEV  = 3=>N_SAMPLES_DEV  = 1" --replace "N_SAMPLES_TEST = 5=>N_SAMPLES_TEST = 1" \
+  --replace "TIMEOUT_SECONDS = 10=>TIMEOUT_SECONDS = 1"
+```
 
 ## 3. strategies/tester.py
 
