@@ -3,8 +3,8 @@
 > Draft structured around the LLM-engineering ladder (prompt → context → harness → loop → graph),
 > as requested by the reviewers. Every design element named here is implemented in the `trading_rl`
 > package (the module is given in brackets) and evaluated by `unsloth/ladder_ablation.ipynb`.
-> **[TBD]** marks numbers that come from the ablation runs. Exact prompt texts are in `docs/paper/prompts/`
-> (static variants) and `ladder_results/<model>/prompts/` (all variants, written by each run).
+> **[TBD]** marks numbers that come from the ablation runs. Exact prompt texts are written to
+> `ladder_results/<model>/prompts/` by each run (`ladder.dump_prompts`).
 
 ## 3.1 Task and overview
 

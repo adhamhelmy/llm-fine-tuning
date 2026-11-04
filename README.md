@@ -18,10 +18,8 @@ The model is prompted to write a `class Strategy(bt.Strategy)`. The code is extr
 | Path | What |
 |---|---|
 | `trading_rl/` | Shared package: prompt, context/RAG, code extraction, backtester, rewards, evaluation, ladder ablation, Unsloth wrapper |
-| `unsloth/` | Training (`main.py`, `kaggle_train.py`, `strategy_generator.ipynb`) and evaluation notebooks |
-| `strategies/` | Hand-written strategies + `tester.py` CLI backtester |
-| `models/` | Evaluation summaries per model |
-| `docs/paper/` | Revised methodology (LLM-engineering ladder), reviewer response, appendix prompts |
+| `unsloth/` | Ladder experiment notebook, `main.py` GRPO training |
+| `docs/paper/` | Revised methodology (LLM-engineering ladder) |
 
 ## Setup
 
@@ -40,29 +38,16 @@ Credentials are not stored in the repo. Fill in the empty `HF_TOKEN` / `ALPACA_A
 
 ## Usage
 
-**Train** (CUDA): run `unsloth/strategy_generator.ipynb` on Colab, push `unsloth/kaggle_train.py` as a Kaggle kernel, or run:
-
-```bash
-python unsloth/main.py
-```
+**Train** (CUDA): `python unsloth/main.py`
 
 **Ablate the LLM-engineering ladder** (paper experiments): `unsloth/ladder_ablation.ipynb` selects the best
 prompt → context (incl. financial RAG) → harness (error repair) → loop (refinement) → graph (analyst/coder)
 configuration on a dev period, then reports every rung on a held-out test period with confidence intervals.
 It supports Ollama, MLX and Unsloth. See `docs/paper/methodology.md`.
 
-**Evaluate** a model by sampling strategies and backtesting them:
+**Base vs. GRPO model:** re-run `ladder_ablation.ipynb` with `LORA_ADAPTER` set.
 
-- `strategy_tester.ipynb` (Unsloth) or `strategy_tester_ollama.ipynb` (local Ollama) for a single model
-- `model_comparison.ipynb` (Colab) or `model_comparison_mlx.ipynb` (Apple Silicon; run `convert_lora_adapters.ipynb` first) for base vs. LoRA across many symbols
-- `strategy_benchmark.ipynb` to re-backtest the best strategies on a common benchmark
-
-**Backtest a hand-written strategy:**
-
-```bash
-cd strategies
-python tester.py dow30_momentum --symbols dow30 --start 2020-01-01 --end 2024-12-31
-```
+**Robustness report** (costs, vs buy-and-hold, per-asset tests, by-year): `trading_rl.robustness.full_report(results_csv, backtester, out_dir=...)`.
 
 **Use the package directly:**
 

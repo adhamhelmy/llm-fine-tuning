@@ -1,7 +1,7 @@
 """Run a CPU-only notebook's code cells headlessly with Alpaca (and optionally Ollama) stubbed.
 
-    python run_notebook.py unsloth/strategy_tester_ollama.ipynb --ollama \
-        --replace "N_SAMPLES      = 20=>N_SAMPLES      = 6"
+    python run_notebook.py unsloth/ladder_ablation.ipynb --ollama \
+        --replace "N_SAMPLES_TEST = 2=>N_SAMPLES_TEST = 1"
 
 - Runs from a temporary copy of the repo, so the real tree gets no artifacts
   (successful_strategies/, CSVs, PNGs). Pass --keep to print the path and keep it.
@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, '..', '..', '..', '..'))
 
 ap = argparse.ArgumentParser()
-ap.add_argument('notebook', help='path relative to the repo root, e.g. unsloth/strategy_benchmark.ipynb')
+ap.add_argument('notebook', help='path relative to the repo root, e.g. unsloth/ladder_ablation.ipynb')
 ap.add_argument('--ollama', action='store_true', help='also stub the Ollama HTTP API')
 ap.add_argument('--replace', action='append', default=[], metavar='OLD=>NEW',
                 help='literal source substitution (e.g. shrink sample counts); repeatable')

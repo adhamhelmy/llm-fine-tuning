@@ -1,7 +1,7 @@
 """Print notebooks as readable text with ORIGINAL cell indexes (what nbedit.NB uses).
 
-    python nb_dump.py unsloth/strategy_tester.ipynb            # all cells
-    python nb_dump.py unsloth/strategy_tester.ipynb 6 9-12     # selected cells / ranges
+    python nb_dump.py unsloth/ladder_ablation.ipynb            # all cells
+    python nb_dump.py unsloth/ladder_ablation.ipynb 6 9-12     # selected cells / ranges
     python nb_dump.py unsloth/*.ipynb --out /tmp/nbsrc         # one .py per notebook (for grep/diff)
 """
 

@@ -1,6 +1,6 @@
 ---
 name: trading-rl-smoke-test
-description: Verify changes to the trading_rl package, strategies/tester.py, or the CPU-only notebooks (strategy_tester_ollama, strategy_benchmark) offline, with synthetic Alpaca bars and a fake Ollama instead of real APIs or a GPU. Use after editing backtest/reward/prompt/evaluate code or those notebooks, or before telling the user something works.
+description: Verify changes to the trading_rl package or the CPU-only ladder_ablation notebook (Ollama backend) offline, with synthetic Alpaca bars and a fake Ollama instead of real APIs or a GPU. Use after editing backtest/reward/prompt/evaluate code or those notebooks, or before telling the user something works.
 ---
 
 # trading_rl offline smoke tests
@@ -29,39 +29,23 @@ If you change the reward ladder or add a status, update `SAMPLE_OUTPUTS` in `scr
 
 ## 2. Run a CPU notebook end to end
 
-```bash
-python3 scripts/run_notebook.py unsloth/strategy_tester_ollama.ipynb --ollama \
-    --replace "N_SAMPLES      = 20=>N_SAMPLES      = 6"
-```
-
 - It runs from a temp copy of the repo, so no artifacts land in the real tree.
 - Magics are dropped, so the notebook imports the **local** `trading_rl`, not the GitHub version.
 - `--replace OLD=>NEW` asserts that `OLD` exists. Use it to shrink sample counts.
-- `strategy_benchmark.ipynb` needs a `model_comparison_results*.csv`. Create one with `--setup`, e.g. write a small DataFrame with columns `model, symbol, status, strategy_code, avg_annual_return_pct, sharpe_ratio` built from `stubs.SAMPLE_OUTPUTS['profitable']` (strip the markdown fence first).
 
 Ladder notebook, tiny config (about 1 min):
 
 ```bash
 python3 scripts/run_notebook.py unsloth/ladder_ablation.ipynb --ollama \
-  --replace "MODEL          = 'qwen2.5-coder:7b'=>MODEL          = 'llama3.2:3b'" \
-  --replace "SYMBOLS        = TESTER_SYMBOLS=>SYMBOLS        = TESTER_SYMBOLS[:3]" \
-  --replace "N_SAMPLES_DEV  = 3=>N_SAMPLES_DEV  = 1" --replace "N_SAMPLES_TEST = 5=>N_SAMPLES_TEST = 1" \
+  --replace "MODEL          = 'qwen3.8:27b-mlx'=>MODEL          = 'llama3.2:3b'" \
+  --replace "SYMBOLS        = TESTER_SYMBOLS[:5]=>SYMBOLS        = TESTER_SYMBOLS[:3]" \
+  --replace "N_SAMPLES_TEST = 2=>N_SAMPLES_TEST = 1" \
   --replace "TIMEOUT_SECONDS = 10=>TIMEOUT_SECONDS = 1"
-```
-
-## 3. strategies/tester.py
-
-```bash
-cd strategies && python3 -c "
-import sys; sys.path[:0]=['..','../.pi/skills/trading-rl-smoke-test/scripts']
-import stubs; stubs.install_fake_bars()
-import tester
-print(tester.run_backtest(tester.load_strategy('dow30_momentum'), 'AAPL,MSFT,KO', '2020-01-01', '2021-12-31', plot=False))"
 ```
 
 ## What can't be tested here
 
-`trading_rl/model.py`, `unsloth/main.py`, `unsloth/kaggle_train.py`, and the notebooks `strategy_generator`, `strategy_tester`, `model_comparison` and `model_comparison_mlx` need unsloth/CUDA or mlx. Check them statically with the `notebook-editing` skill's `nb_lint.py` and `uvx pyflakes`, and tell the user they were not executed.
+`trading_rl/model.py` and `unsloth/main.py` need unsloth/CUDA. Check them statically with the `notebook-editing` skill's `nb_lint.py` and `uvx pyflakes`, and tell the user they were not executed.
 
 ## Stub details
 

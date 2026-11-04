@@ -29,10 +29,10 @@ The notebooks are JSON and target Colab, Kaggle, Apple Silicon (MLX) or local Ol
 
 - **Write format:** `json.dump(nb, f, indent=1, ensure_ascii=False)` plus a trailing newline. `nbedit.save_notebook` does this; any other format produces a whole-file diff.
 - **No outputs or execution counts are committed.** To clear them: `for c in nb['cells']: if c['cell_type']=='code': c['outputs']=[]; c['execution_count']=None`.
-- **Secrets are empty placeholders** (`HF_TOKEN = ''`, `ALPACA_API_KEY = ''`, …) that the user fills in at runtime. Don't add secret-loader helpers, and never paste real keys (the repo is public). `strategy_tester.ipynb` uses Colab `userdata`; leave that as is.
+- **Secrets are empty placeholders** (`HF_TOKEN = ''`, `ALPACA_API_KEY = ''`, …) that the user fills in at runtime. Don't add secret-loader helpers, and never paste real keys (the repo is public).
 - **No inline copies of shared logic.** Backtester, rewards, prompts, code extraction and evaluation come from `trading_rl`. Notebooks keep only their model-specific code, such as a `generate(prompt) -> str` function passed to `evaluate_sample`/`evaluate_symbol`.
 - **Every notebook using `trading_rl` has the setup cell** (`nbedit.SETUP_CELL`) right after its installs. It imports `../trading_rl` from a local clone, or pip-installs from GitHub on Colab/Kaggle. So `trading_rl` changes must be pushed before a Colab run sees them; say so to the user.
 - **Import order:** in Unsloth notebooks, `from trading_rl.model import Unsloth` (or `from unsloth import …`) must come before trl/transformers imports.
-- **Prompts:** comparison notebooks use `make_prompt(..., compact=True)` to stay comparable with old results; training uses the full prompt. Don't switch without asking.
+- **Prompts:** evaluation prompts come from `LadderConfig` (`ladder.build_prompt` / `prompt_fn`); training uses `prompt_fn(best)` or the default `make_prompt`. Don't switch without asking.
 - **Result columns:** `status` (`profitable`/`loss`/`no_trades`/…), `reward_score`, `strategy_code`. Drop `strategy_code` before writing `Summary.csv`.
-- Don't merge or delete notebooks without asking. `strategy_tester` vs `model_comparison`, and `strategy_tester_ollama` vs `model_comparison_mlx`, overlap on purpose until the user decides.
+- Don't merge or delete notebooks without asking.
