@@ -122,6 +122,14 @@ check("repair fixes the error", rec['status'] == 'profitable' and rec['llm_calls
 check("repair: feedback has error", 'ZeroDivisionError (line' in llm.prompts[1], llm.prompts[1][-300:])
 check("no test leakage (repair)", win.count((TS, TE)) == 1 and set(win) <= {(TS, TE), (FS, FE)}, str(win))
 
+lines = []
+rec = L.generate_strategy(ScriptedLLM(), L.LadderConfig(repair_rounds=2, refine_rounds=1, analyst=True),
+                          bt, SYM, TS, TE, timeout=5, log=lambda *a, **k: lines.append(' '.join(map(str, a))))
+logged = '\n'.join(lines)
+check("log=print traces every step", all(t in logged for t in
+      ('LLM call 1: analyst', 'repair 1/2', 'refine 1/1', '[feedback #1] status=exception',
+       '[select]', '[final] status=')), logged[-400:])
+
 rec, llm, win = run_cfg(L.LadderConfig(repair_rounds=1, refine_rounds=2))
 check("refine rounds", rec['llm_calls'] == 4 and rec['candidates'] == 4, f"calls={rec['llm_calls']}")
 check("refine: in-sample metrics only", 'In-sample dry run (2020-01-01 to 2021-12-31)' in llm.prompts[-1]
@@ -146,7 +154,7 @@ check("RAG retrieval", kb.retrieve('mean-reverting range-bound', 2)[0].title.sta
       kb.retrieve('mean-reverting range-bound', 1)[0].title)
 
 check("stage configs", [c.name for c in L.stage_configs('harness', L.LadderConfig(examples=2))]
-      == ['examples=2', 'examples=2,repair_rounds=1', 'examples=2,repair_rounds=3'])
+      == ['examples=2', 'examples=2,repair_rounds=3'])
 
 with tempfile.TemporaryDirectory() as d:
     out = os.path.join(d, 'abl.csv')
@@ -163,9 +171,61 @@ with tempfile.TemporaryDirectory() as d:
     delta = L.paired_delta(df, 'baseline', 'repair_rounds=1')
     check("paired delta", delta['delta'] == 1.0 and delta['n_symbols'] == 2, str(delta))
     check("select best", L.select_best(rep, cfgs).name == 'repair_rounds=1')
-    L.dump_prompts(os.path.join(d, 'prompts'), L.stage_configs('graph', full), bt)
+    L.dump_prompts(os.path.join(d, 'prompts'), [full, full.replace(analyst=True)], bt)
     check("dump prompts", len(os.listdir(os.path.join(d, 'prompts'))) == 3)
 tr.Backtester.run = _orig_run
+
+# ── 8. robustness: costs, B&H comparison, stats, years, duplicates ──────────────
+from trading_rl import robustness as R
+SMA = ("class Strategy(bt.Strategy):\n    def __init__(self):\n        self.fast = bt.indicators.SMA(self.data.close, period=10)\n"
+       "        self.slow = bt.indicators.SMA(self.data.close, period=30)\n    def next(self):\n"
+       "        if not self.position and self.fast[0] > self.slow[0]:\n            self.order_target_percent(target=0.95)\n"
+       "        elif self.position and self.fast[0] < self.slow[0]:\n            self.close()\n")
+SMA_RENAMED = SMA.replace('self.fast', 'self.quick').replace('self.slow', 'self.lagging') + "        # tweak\n"
+FLIP = ("class Strategy(bt.Strategy):\n    def __init__(self):\n        pass\n    def next(self):\n"
+        "        if self.position:\n            self.close()\n        else:\n            self.order_target_percent(target=0.95)\n")
+RS, RE = '2022-01-01', '2024-12-31'
+res = pd.DataFrame([{'model': 'm', 'config': c, 'symbol': sym, 'start': RS, 'end': RE, 'sample': smp,
+                     'status': 'loss', 'strategy_code': code}
+                    for sym in ('AAPL', 'MSFT') for smp in (1, 2)
+                    for c, code in (('sma', SMA if smp == 1 else SMA_RENAMED), ('flip', FLIP))])
+rb = R.rebacktest(res, bt, cost_levels={'none': (0, 0), 'high': (10, 15)}, timeout=20)
+check("rebacktest rows", len(rb) == (len(res) + 2) * 2 and rb['rerun_status'].ne('error').all(),
+      str(rb['rerun_status'].value_counts().to_dict()))
+f = rb[(rb['config'] == 'flip') & (rb['symbol'] == 'AAPL') & (rb['sample'] == 1)].set_index('cost')
+check("costs reduce return", f.at['high', 'return_pct'] < f.at['none', 'return_pct'] - 5
+      and f.at['high', 'commission_paid'] > 0 and f.at['none', 'commission_paid'] == 0,
+      f"{f.at['none', 'return_pct']:.1f} -> {f.at['high', 'return_pct']:.1f}")
+check("turnover/trades", f.at['none', 'n_trades'] > 300 and f.at['none', 'turnover'] > 50,
+      f"trades={f.at['none', 'n_trades']} turnover={f.at['none', 'turnover']:.0f}")
+bh = rb[(rb['config'] == 'buy_and_hold') & (rb['cost'] == 'none') & (rb['symbol'] == 'AAPL')].iloc[0]
+check("year columns", all(f'year_{y}' in rb for y in (2022, 2023, 2024)) and bh['n_trades'] == 1
+      and bh['volatility_pct'] > 0)
+plain = tr.score_strategy(SMA, bt, 'AAPL', RS, RE).result
+same = rb[(rb['config'] == 'sma') & (rb['symbol'] == 'AAPL') & (rb['sample'] == 1) & (rb['cost'] == 'none')].iloc[0]
+check("cost 'none' == training backtest", abs(plain.return_pct - same['return_pct']) < 1e-9)
+cr = R.cost_report(rb)
+check("cost report", len(cr) == 4 and cr['bh_annual'].notna().all()
+      and cr.set_index(['config', 'cost']).at[('flip', 'high'), 'beat_bh'] == 0.0)
+print(R.format_cost_report(cr).to_string())
+check("per asset", len(R.per_asset(rb, 'high')) == 4)
+yr = R.year_report(rb, 'none')
+check("year report", set(yr['year']) == {2022, 2023, 2024} and set(yr['regime']) == {'bear', 'bull'})
+# Wilcoxon exact p for n=5 all positive = 2/32; all ties of zero -> n=0
+check("wilcoxon exact", abs(R.signed_rank_test([1, 2, 3, 4, 5])['p'] - 0.0625) < 1e-12
+      and R.signed_rank_test([0, 0])['n'] == 0)
+mc = R.mcnemar(pd.DataFrame({'config': ['a'] * 6 + ['b'] * 6, 'symbol': list('xyzxyz') * 2,
+                             'sample': [1, 1, 1, 2, 2, 2] * 2,
+                             'status': ['exception'] * 6 + ['loss'] * 6}), 'a', 'b')
+check("mcnemar", mc['b_only'] == 6 and abs(mc['p'] - 2 / 64) < 1e-12, str(mc))
+# renamed identifiers + a comment = exact duplicate; a changed period = near-duplicate
+near = res.copy()
+near.loc[(near['config'] == 'sma') & (near['symbol'] == 'MSFT') & (near['sample'] == 2), 'strategy_code'] = \
+    SMA.replace('period=30', 'period=40')
+summ, pairs = R.duplicates(near)
+sma = summ.set_index('config').loc['sma']
+check("near-duplicates", sma['unique_exact'] == 2 and sma['n_clusters'] == 1 and pairs['exact'].sum() == 3 + 6
+      and summ.set_index('config').at['flip', 'unique_exact'] == 1, summ.to_string())
 
 print(f"\n{len(failures)} failure(s)" + (f": {failures}" if failures else ""))
 sys.exit(1 if failures else 0)

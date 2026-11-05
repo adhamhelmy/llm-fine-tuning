@@ -1,5 +1,7 @@
 """Model-agnostic evaluation: any `generate(prompt) -> str` callable (Unsloth, MLX, Ollama...)."""
 
+from alpaca_trade_api.rest import TimeFrame
+
 from .backtest import Backtester
 from .codegen import extract_function
 from .prompt import make_prompt
@@ -7,7 +9,8 @@ from .rewards import save_strategy, score_strategy
 
 
 def evaluate_sample(generate, backtester: Backtester, symbol, start, end,
-                    prompt=None, timeout=10, save_dir=None, cash=10_000):
+                    prompt=None, timeout=10, save_dir=None, cash=10_000,
+                    timeframe=TimeFrame.Day):
     """Generate one strategy for `symbol`, score it and return a flat result record.
     save_dir: if set, profitable strategies are saved there (with plots)."""
     prompt = prompt or make_prompt(symbol, start, end)
@@ -23,7 +26,8 @@ def evaluate_sample(generate, backtester: Backtester, symbol, start, end,
         rec.update(status='exception', reward_score=-2, error=f"generate: {str(e)[:200]}")
         return rec
 
-    score = score_strategy(code, backtester, symbol, start, end, cash=cash, timeout=timeout)
+    score = score_strategy(code, backtester, symbol, start, end, cash=cash,
+                           timeout=timeout, timeframe=timeframe)
     rec.update(strategy_code=code, status=score.status, reward_score=score.reward, error=score.error)
     if score.result is not None:
         rec.update(score.result._asdict())
@@ -33,11 +37,13 @@ def evaluate_sample(generate, backtester: Backtester, symbol, start, end,
 
 
 def evaluate_symbol(generate, backtester: Backtester, symbol, start, end, n_samples,
-                    prompt=None, timeout=10, save_dir=None, cash=10_000):
+                    prompt=None, timeout=10, save_dir=None, cash=10_000,
+                    timeframe=TimeFrame.Day):
     """Generate and score n_samples candidates for one symbol."""
     results = []
     for i in range(n_samples):
-        rec = evaluate_sample(generate, backtester, symbol, start, end, prompt, timeout, save_dir, cash)
+        rec = evaluate_sample(generate, backtester, symbol, start, end, prompt,
+                              timeout, save_dir, cash, timeframe)
         rec['sample'] = i + 1
         if rec['error'] and rec['status'] == 'exception':
             print(f"    [{symbol} s{i+1}] Exception: {rec['error'][:100]}")

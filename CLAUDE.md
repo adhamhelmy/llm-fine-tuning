@@ -25,8 +25,7 @@ trading_rl/                    # Shared package — ALL backtest / prompt / rewa
   model.py                     #   Unsloth wrapper (GPU only; not imported by trading_rl/__init__)
 pyproject.toml                 # makes trading_rl pip-installable; [train] extra = GPU deps
 unsloth/
-  main.py                      # local GRPO training / quick eval entry point (CUDA)
-  ladder_ablation.ipynb        # paper experiments: stage-wise ablation (ollama / mlx / unsloth)
+  main.py                      # try / test / compare / train models (settings at the top of the file)
 docs/paper/                    # revised methodology (ladder)
 ```
 
@@ -109,7 +108,7 @@ Alpaca (historical bars only; paper endpoint `https://paper-api.alpaca.markets`)
 - `evaluate_sample(generate, backtester, symbol, start, end, ...)` accepts any `generate(prompt) -> str` callable (Unsloth, MLX, Ollama) and returns a flat record (status, reward, metrics, code, error).
 - `summarize(df)` prints the status breakdown and metrics.
 - Result CSVs use the columns `status` and `strategy_code`.
-- Base vs LoRA: re-run `ladder_ablation.ipynb` with `LORA_ADAPTER` set. `unsloth/main.py` writes quick summaries to `models/<model>/`.
+- Base vs LoRA: list both in `MODELS` in `unsloth/main.py` and run `compare`. Results go to `ladder_results/<model>/eval_<split>.csv`.
 
 ## Generated artifacts (gitignored)
 

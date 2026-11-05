@@ -1,6 +1,6 @@
 ---
 name: trading-rl-smoke-test
-description: Verify changes to the trading_rl package or the CPU-only ladder_ablation notebook (Ollama backend) offline, with synthetic Alpaca bars and a fake Ollama instead of real APIs or a GPU. Use after editing backtest/reward/prompt/evaluate code or those notebooks, or before telling the user something works.
+description: Verify changes to the trading_rl package or CPU-only notebooks (Ollama backend) offline, with synthetic Alpaca bars and a fake Ollama instead of real APIs or a GPU. Use after editing backtest/reward/prompt/evaluate code or those notebooks, or before telling the user something works.
 ---
 
 # trading_rl offline smoke tests
@@ -33,14 +33,11 @@ If you change the reward ladder or add a status, update `SAMPLE_OUTPUTS` in `scr
 - Magics are dropped, so the notebook imports the **local** `trading_rl`, not the GitHub version.
 - `--replace OLD=>NEW` asserts that `OLD` exists. Use it to shrink sample counts.
 
-Ladder notebook, tiny config (about 1 min):
+Example (about 1 min with a tiny config):
 
 ```bash
-python3 scripts/run_notebook.py unsloth/ladder_ablation.ipynb --ollama \
-  --replace "MODEL          = 'qwen3.8:27b-mlx'=>MODEL          = 'llama3.2:3b'" \
-  --replace "SYMBOLS        = TESTER_SYMBOLS[:5]=>SYMBOLS        = TESTER_SYMBOLS[:3]" \
-  --replace "N_SAMPLES_TEST = 2=>N_SAMPLES_TEST = 1" \
-  --replace "TIMEOUT_SECONDS = 10=>TIMEOUT_SECONDS = 1"
+python3 scripts/run_notebook.py path/to/notebook.ipynb --ollama \
+  --replace "N_SAMPLES = 2=>N_SAMPLES = 1"
 ```
 
 ## What can't be tested here

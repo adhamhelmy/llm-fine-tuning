@@ -1,8 +1,8 @@
 # 3 Methodology (revised draft)
 
-> Draft structured around the LLM-engineering ladder (prompt → context → harness → loop → graph),
+> Draft structured around the LLM-engineering ladder (prompt → context → harness → loop; graph not evaluated, see §3.7),
 > as requested by the reviewers. Every design element named here is implemented in the `trading_rl`
-> package (the module is given in brackets) and evaluated by `unsloth/ladder_ablation.ipynb`.
+> package (the module is given in brackets) and evaluated with `unsloth/main.py`.
 > **[TBD]** marks numbers that come from the ablation runs. Exact prompt texts are written to
 > `ladder_results/<model>/prompts/` by each run (`ladder.dump_prompts`).
 
@@ -18,11 +18,10 @@ before adding the next:
 
 | Stage | Question | What we vary |
 |---|---|---|
-| **Prompt** | How is the task specified? | rules and skeleton, few-shot examples, explicit reasoning |
+| **Prompt** | How is the task specified? | rules and skeleton, few-shot examples |
 | **Context** | What information does the model get? | Backtrader API reference, pre-window market statistics, retrieved strategy knowledge (RAG) |
 | **Harness** | What checks and tools surround a single generation? | extraction, static validation, sandboxed execution, a dry run with error feedback and repair |
 | **Loop** | How does the system improve over iterations? | inference-time refinement on in-sample metrics; **GRPO** fine-tuning (training-time loop) |
-| **Graph** | Does decomposing the task into roles help? | analyst node (specification) → coder node (implementation) |
 
 The central claim is conditional: GRPO is evaluated **on top of the best configuration found for the
 lower stages**, not against a weak prompt-only baseline.
@@ -87,15 +86,14 @@ selected configuration after each stage (a *rung*) is then evaluated once on tes
 
 | Stage | Variants (added to the best config so far) |
 |---|---|
-| Prompt | baseline; compact (no skeleton); 2 few-shot examples; plan-then-code; examples + plan |
+| Prompt | baseline; 2 few-shot examples |
 | Context | none; API reference; market summary; RAG (k = 3); all three |
-| Harness | none; repair ≤ 1 round; repair ≤ 3 rounds |
-| Loop (inference) | none; refine 2 rounds; refine 4 rounds |
-| Graph | single agent; analyst → coder |
+| Harness | none; repair ≤ 3 rounds |
+| Loop (inference) | none; refine 2 rounds |
 
 ## 3.3 Stage 1 – Prompt engineering (`prompt.py`)
 
-**Baseline prompt (P0).** The full text is in `prompts/baseline.txt`. It consists of:
+**Baseline prompt (P0).** The full text is written to `ladder_results/<model>/prompts/baseline.txt`. It consists of:
 - a header naming the stock and window;
 - the framework contract (the class is passed to `run_backtest(StrategyClass, …)`);
 - ten strict rules, each targeting a failure mode we observed:
@@ -167,7 +165,7 @@ from *financial* context:
    window. If it fails, the model receives its previous code and a precise error message, e.g.
    `ZeroDivisionError (line 12): …` (the line number refers to the generated code), or "the strategy
    never placed a trade". It then produces a corrected class. This is repeated for up to R rounds
-   (R ∈ {0, 1, 3}); the template is in `prompts/_feedback_templates.txt`.
+   (R ∈ {0, 3}); the template is written to `ladder_results/<model>/prompts/_feedback_templates.txt`.
 
 **Result.** Table 2, harness block **[TBD]**. The expected effect is mainly on the valid rate. Its
 cost is reported as the mean number of LLM calls.
@@ -179,7 +177,7 @@ cost is reported as the mean number of LLM calls.
 Once a candidate trades on the feedback window, the model receives the in-sample metrics (return,
 average annual return, Sharpe, drawdown), buy-and-hold's return over the same period, and an
 instruction to improve out-of-sample risk-adjusted return without overfitting. After up to N rounds
-(N ∈ {0, 2, 4}), the candidate with the best **in-sample** reward is kept; test data is never used
+(N ∈ {0, 2}), the candidate with the best **in-sample** reward is kept; test data is never used
 for this choice. This is the non-parametric counterpart of RL: it uses the same feedback signal
 without updating any weights.
 
@@ -214,16 +212,9 @@ without updating any weights.
 
 ## 3.7 Stage 5 – Graph engineering (`ladder.build_analyst_prompt`)
 
-A two-node graph:
-1. The **analyst** node receives the same context (minus code examples) but no coding rules. It
-   writes a specification of at most 150 words: market hypothesis, indicators with parameters, entry
-   and exit rules, sizing and risk.
-2. The **coder** node receives the selected coding prompt plus that specification, followed by the
-   same harness and loop.
-
-Richer graphs (e.g. a risk-critic node, or several competing analysts) are left to future work.
-
-**Result.** Table 2, graph block **[TBD]**.
+Not evaluated in this version. The task is a single code artefact per window, so we treat
+multi-role decomposition (e.g. analyst → coder, risk critic) as future work. A two-node analyst → coder
+variant is implemented (`LadderConfig(analyst=True)`) but is not part of the ladder.
 
 ## 3.8 Threats to validity
 

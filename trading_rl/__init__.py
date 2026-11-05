@@ -1,7 +1,7 @@
 """Shared code for GRPO fine-tuning of LLMs that generate Backtrader strategies.
 
 Lightweight modules (no GPU needed): config, prompt, context, knowledge, codegen, backtest, rewards,
-evaluate, baselines, ladder, dataset.
+evaluate, baselines, ladder, robustness, dataset.
 `trading_rl.model` (Unsloth wrapper) needs unsloth + CUDA and is not imported here.
 """
 
@@ -17,6 +17,9 @@ from .ladder import (STAGES, LadderConfig, build_prompt, dump_prompts, format_re
                      generate_strategy, paired_delta, prompt_fn, report, run_ablation,
                      select_best, stage_configs)
 from .prompt import extract_trading_parameters, make_prompt
+from .robustness import (COST_LEVELS, REGIMES, cost_report, duplicates, format_cost_report,
+                         full_report, mcnemar, paired_wilcoxon, per_asset, rebacktest,
+                         signed_rank_test, year_report)
 from .rewards import REWARDS, Score, make_strategy_reward, save_strategy, score_strategy
 
 __all__ = [
@@ -31,5 +34,7 @@ __all__ = [
     'STAGES', 'LadderConfig', 'build_prompt', 'dump_prompts', 'format_report', 'generate_strategy',
     'paired_delta', 'prompt_fn', 'report', 'run_ablation', 'select_best', 'stage_configs',
     'extract_trading_parameters', 'make_prompt',
+    'COST_LEVELS', 'REGIMES', 'cost_report', 'duplicates', 'format_cost_report', 'full_report',
+    'mcnemar', 'paired_wilcoxon', 'per_asset', 'rebacktest', 'signed_rank_test', 'year_report',
     'REWARDS', 'Score', 'make_strategy_reward', 'save_strategy', 'score_strategy',
 ]

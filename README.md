@@ -38,14 +38,16 @@ Credentials are not stored in the repo. Fill in the empty `HF_TOKEN` / `ALPACA_A
 
 ## Usage
 
-**Train** (CUDA): `python unsloth/main.py`
+Edit the settings at the top of `unsloth/main.py` (models, ladder configs, split, symbols), then:
 
-**Ablate the LLM-engineering ladder** (paper experiments): `unsloth/ladder_ablation.ipynb` selects the best
-prompt → context (incl. financial RAG) → harness (error repair) → loop (refinement) → graph (analyst/coder)
-configuration on a dev period, then reports every rung on a held-out test period with confidence intervals.
-It supports Ollama, MLX and Unsloth. See `docs/paper/methodology.md`.
+```bash
+python unsloth/main.py try       # one strategy, printed in full
+python unsloth/main.py test      # first model on every config, with a report
+python unsloth/main.py compare   # all models on the same configs (e.g. base vs. GRPO adapter)
+python unsloth/main.py train     # GRPO (CUDA)
+```
 
-**Base vs. GRPO model:** re-run `ladder_ablation.ipynb` with `LORA_ADAPTER` set.
+Models can be Ollama, MLX or Unsloth. See `docs/paper/methodology.md` for the ladder.
 
 **Robustness report** (costs, vs buy-and-hold, per-asset tests, by-year): `trading_rl.robustness.full_report(results_csv, backtester, out_dir=...)`.
 

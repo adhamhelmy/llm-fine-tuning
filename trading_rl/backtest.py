@@ -158,30 +158,49 @@ class Backtester:
 
     # ── backtesting ───────────────────────────────────────────────────────────
 
-    def run(self, strategy, symbols, start, end, timeframe=TimeFrame.Day, cash=10_000,
-            plot=False, plot_prefix='backtest_plot', show_plots=True) -> BacktestResult:
-        """Backtest a bt.Strategy subclass. With plot=True, charts are saved to
-        f"{plot_prefix}_{i}.png" and their paths stored in self.last_plots."""
+    def _cerebro(self, strategy, symbols, start, end, timeframe, cash,
+                 commission=0.0, slippage=0.0, detailed=False):
         cerebro = bt.Cerebro(stdstats=True)
         cerebro.broker.setcash(cash)
+        if commission:
+            cerebro.broker.setcommission(commission=commission)   # fraction of traded value
+        if slippage:
+            # Fills move against the order by `slippage` (fraction of price); slip_out lets
+            # fills go outside the bar's high/low so the cost is always paid.
+            cerebro.broker.set_slippage_perc(slippage, slip_open=True, slip_limit=True,
+                                             slip_match=True, slip_out=True)
         cerebro.addstrategy(strategy)
         cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe', **self.sharpe_kwargs)
         cerebro.addanalyzer(bt.analyzers.AnnualReturn, _name='annual')
         cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
-
+        if detailed:
+            cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
+            cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='daily', timeframe=bt.TimeFrame.Days)
+            cerebro.addanalyzer(_Activity, _name='activity')
         for sym in resolve_symbols(symbols):
             cerebro.adddata(bt.feeds.PandasData(
                 dataname=self.get_bars(sym, start, end, timeframe), name=sym))
+        return cerebro
 
-        initial = cerebro.broker.getvalue()
-        strat = cerebro.run()[0]
+    @staticmethod
+    def _result(cerebro, strat, initial) -> BacktestResult:
         annual = strat.analyzers.annual.get_analysis()
-        result = BacktestResult(
+        return BacktestResult(
             return_pct=(cerebro.broker.getvalue() / initial - 1) * 100,
             sharpe_ratio=strat.analyzers.sharpe.get_analysis().get('sharperatio'),
             avg_annual_return_pct=(sum(annual.values()) / len(annual) * 100) if annual else 0.0,
             max_drawdown_pct=strat.analyzers.drawdown.get_analysis()['max']['drawdown'],
         )
+
+    def run(self, strategy, symbols, start, end, timeframe=TimeFrame.Day, cash=10_000,
+            plot=False, plot_prefix='backtest_plot', show_plots=True) -> BacktestResult:
+        """Backtest a bt.Strategy subclass (frictionless: no commission or slippage, which is
+        what the GRPO reward uses). With plot=True, charts are saved to
+        f"{plot_prefix}_{i}.png" and their paths stored in self.last_plots."""
+        cerebro = self._cerebro(strategy, symbols, start, end, timeframe, cash)
+        initial = cerebro.broker.getvalue()
+        strat = cerebro.run()[0]
+        result = self._result(cerebro, strat, initial)
         if self.verbose:
             print(result)
 
@@ -189,6 +208,36 @@ class Backtester:
         if plot:
             self.last_plots = self._save_plots(strat, plot_prefix, show_plots)
         return result
+
+    def run_detailed(self, strategy, symbols, start, end, timeframe=TimeFrame.Day, cash=10_000,
+                     commission=0.0, slippage=0.0, periods_per_year=252):
+        """Backtest with transaction costs and return (BacktestResult, extra metrics dict).
+
+        commission / slippage: fractions per side (0.0005 = 5 bps).
+        extras: n_trades (closed + open), turnover (annualised traded value / avg equity),
+        volatility_pct (annualised stdev of per-bar returns), commission_paid,
+        rejected_orders (margin/rejected: costs can make all-in orders unaffordable) and
+        year_<YYYY> (calendar-year return in %).
+        """
+        cerebro = self._cerebro(strategy, symbols, start, end, timeframe, cash,
+                                commission=commission, slippage=slippage, detailed=True)
+        initial = cerebro.broker.getvalue()
+        strat = cerebro.run()[0]
+        result = self._result(cerebro, strat, initial)
+
+        tot = strat.analyzers.trades.get_analysis().get('total', {})
+        rets = pd.Series(list(strat.analyzers.daily.get_analysis().values()), dtype=float)
+        act = strat.analyzers.activity.get_analysis()
+        extras = {
+            'n_trades': int(tot.get('closed', 0)) + int(tot.get('open', 0)),
+            'turnover': act['turnover'],
+            'volatility_pct': float(rets.std() * periods_per_year ** 0.5 * 100) if len(rets) > 1 else 0.0,
+            'commission_paid': act['commission'],
+            'rejected_orders': act['rejected'],
+        }
+        for year, r in strat.analyzers.annual.get_analysis().items():
+            extras[f'year_{year}'] = r * 100
+        return result, extras
 
     def run_with_timeout(self, strategy, symbols, start, end, timeframe=TimeFrame.Day,
                          cash=10_000, timeout=10) -> BacktestResult:
@@ -218,3 +267,31 @@ class Backtester:
             except ImportError:
                 pass
         return paths
+
+
+class _Activity(bt.Analyzer):
+    """Traded value, commission and rejected orders; turnover is annualised by calendar time."""
+
+    def start(self):
+        self.traded = self.comm = 0.0
+        self.rejected = 0
+        self.values, self.first, self.last = [], None, None
+
+    def notify_order(self, order):
+        if order.status == order.Completed:
+            self.traded += abs(order.executed.size * order.executed.price)
+            self.comm += order.executed.comm
+        elif order.status in (order.Margin, order.Rejected):
+            self.rejected += 1
+
+    def next(self):
+        self.values.append(self.strategy.broker.getvalue())
+        d = self.strategy.datetime.date(0)
+        self.first = self.first or d
+        self.last = d
+
+    def get_analysis(self):
+        years = max((self.last - self.first).days / 365.25, 1 / 365.25) if self.first else 1.0
+        avg = sum(self.values) / len(self.values) if self.values else 0.0
+        return {'turnover': (self.traded / avg / years) if avg else 0.0,
+                'commission': self.comm, 'rejected': self.rejected}

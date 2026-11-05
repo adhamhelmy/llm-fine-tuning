@@ -2,7 +2,7 @@
 
     import sys; sys.path.insert(0, '.pi/skills/notebook-editing/scripts')
     from nbedit import NB
-    n = NB('unsloth/ladder_ablation.ipynb')
+    n = NB('path/to/notebook.ipynb')
     n.set(6, 'import json', 'new cell source')      # replace a cell (asserts it starts with 'import json')
     n.sub(9, 'old text', 'new text')                # substring replace (asserts exactly one match)
     n.delete(10, 'class Backtrader:')               # delete (asserts prefix)

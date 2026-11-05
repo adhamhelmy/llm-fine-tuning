@@ -80,12 +80,11 @@ class LadderConfig:
 
 # Variants tried at each stage, applied on top of the best config of the previous stage.
 STAGES = {
-    'prompt':  [{}, {'compact': True}, {'examples': 2}, {'plan': True}, {'examples': 2, 'plan': True}],
+    'prompt':  [{}, {'examples': 2}],
     'context': [{}, {'api_reference': True}, {'market_summary': True}, {'rag_k': 3},
                 {'api_reference': True, 'market_summary': True, 'rag_k': 3}],
-    'harness': [{}, {'repair_rounds': 1}, {'repair_rounds': 3}],
-    'loop':    [{}, {'refine_rounds': 2}, {'refine_rounds': 4}],
-    'graph':   [{}, {'analyst': True}],
+    'harness': [{}, {'repair_rounds': 3}],
+    'loop':    [{}, {'refine_rounds': 2}],
     'probe':   [{}, {'anonymize': True}],   # diagnostic, not a ladder stage
 }
 
@@ -222,10 +221,19 @@ def _repair_feedback(score):
 # ── one sample through the whole pipeline ──────────────────────────────────────
 
 def generate_strategy(generate, cfg: LadderConfig, backtester: Backtester, symbol, start, end,
-                      kb=None, timeout=10, cash=10_000, _ctx=None):
+                      kb=None, timeout=10, cash=10_000, _ctx=None, log=None):
     """Run prompt -> (graph) -> generation -> (harness/loop on the feedback window) -> final
-    test on [start, end]. Returns a flat record."""
+    test on [start, end]. Returns a flat record. Pass log=print to trace every step."""
     ctx = _ctx or _Context(backtester, kb)
+    log = log or (lambda *a, **k: None)
+
+    def log_score(label, s):
+        r = s.result
+        extra = (f"  annual {r.avg_annual_return_pct:.2f}%  return {r.return_pct:.2f}%  "
+                 f"maxDD {r.max_drawdown_pct:.2f}%") if r is not None and r.return_pct is not None else ''
+        log(f"[{label}] status={s.status}  reward={s.reward}{extra}")
+        if s.error:
+            log(f"[{label}] error: {s.error}")
     rec = {'config': cfg.name, 'config_json': cfg.to_json(), 'symbol': symbol, 'start': start,
            'end': end, 'status': None, 'reward_score': None, 'return_pct': None,
            'sharpe_ratio': None, 'avg_annual_return_pct': None, 'max_drawdown_pct': None,
@@ -234,52 +242,69 @@ def generate_strategy(generate, cfg: LadderConfig, backtester: Backtester, symbo
            'spec': None, 'prompt_chars': None, 'prompt_sha': None, 'gen_seconds': 0.0}
     t0 = time.time()
 
-    def call(prompt):
+    def call(prompt, why):
         rec['llm_calls'] += 1
-        return generate(prompt)
+        log(f"\n[LLM call {rec['llm_calls']}: {why}] prompt {len(prompt)} chars, waiting for model...")
+        t = time.time()
+        out = generate(prompt)
+        log(f"\n[LLM call {rec['llm_calls']}] done in {time.time() - t:.1f}s, {len(out)} chars")
+        return out
 
     try:
         prompt = build_prompt(cfg, symbol, start, end, _ctx=ctx)
         if cfg.analyst:
-            spec = strip_thinking(call(build_analyst_prompt(cfg, symbol, start, end, _ctx=ctx)))
+            spec = strip_thinking(call(build_analyst_prompt(cfg, symbol, start, end, _ctx=ctx), 'analyst'))
             rec['spec'] = spec
             prompt += f"\n\nIMPLEMENT THIS STRATEGY SPECIFICATION:\n{spec}"
         rec['prompt_chars'] = len(prompt)
         rec['prompt_sha'] = hashlib.sha1(prompt.encode()).hexdigest()[:10]
-        code = extract_function(call(prompt))
+        code = extract_function(call(prompt, 'initial generation'))
+        log(f"[extract] {'got a Strategy class, ' + str(len(code)) + ' chars' if code else 'NO code found in the reply'}")
 
         if cfg.uses_feedback:
             fstart, fend = feedback_window(start)
+            log(f"[feedback window] backtesting on {fstart} -> {fend} (in-sample)")
             val = score_strategy(code, backtester, symbol, fstart, fend, cash=cash, timeout=timeout)
+            log_score('feedback #1', val)
             candidates, repairs, refines = [(code, val)], 0, 0
             while True:
                 if val.status not in OK_STATUSES:
                     if repairs >= cfg.repair_rounds:
+                        log(f"[harness] repair budget used up ({cfg.repair_rounds} rounds)")
                         break
                     repairs += 1
                     follow = REPAIR_TEMPLATE.format(prompt=prompt, code=code or '(none)',
                                                     feedback=_repair_feedback(val))
                 else:
                     if refines >= cfg.refine_rounds:
+                        if cfg.refine_rounds:
+                            log(f"[loop] refine budget used up ({cfg.refine_rounds} rounds)")
                         break
                     refines += 1
                     follow = REFINE_TEMPLATE.format(prompt=prompt, code=code, fstart=fstart, fend=fend,
                                                     metrics=_metrics_text(val.result),
                                                     bh_annual=ctx.bh_annual(symbol, fstart, fend))
-                code = extract_function(call(follow))
+                why = f'repair {repairs}/{cfg.repair_rounds}' if val.status not in OK_STATUSES \
+                    else f'refine {refines}/{cfg.refine_rounds}'
+                code = extract_function(call(follow, why))
                 val = score_strategy(code, backtester, symbol, fstart, fend, cash=cash, timeout=timeout)
                 candidates.append((code, val))
+                log_score(f'feedback #{len(candidates)}', val)
             # keep the best candidate by in-sample reward (latest wins ties)
             code, val = max(reversed(candidates), key=lambda cv: cv[1].reward)
+            log(f"[select] keeping candidate with in-sample reward {val.reward} (of {len(candidates)})")
             rec.update(candidates=len(candidates), val_status=val.status, val_reward=val.reward,
                        val_avg_annual_return_pct=val.result.avg_annual_return_pct if val.result else None)
     except Exception as e:  # generation / context failure
+        log(f"[pipeline] EXCEPTION: {e!r}")
         rec.update(status='exception', reward_score=-2, error=f"pipeline: {str(e)[:200]}",
                    gen_seconds=time.time() - t0)
         return rec
 
     rec['gen_seconds'] = time.time() - t0
+    log(f"[final] backtesting on the evaluated window {start} -> {end}")
     score = score_strategy(code, backtester, symbol, start, end, cash=cash, timeout=timeout)
+    log_score('final', score)
     rec.update(strategy_code=code, status=score.status, reward_score=score.reward, error=score.error)
     if score.result is not None:
         rec.update(score.result._asdict())
