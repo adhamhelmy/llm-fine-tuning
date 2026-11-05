@@ -28,7 +28,7 @@ pyproject.toml                 # pip-installable; [train] = GPU deps, [dev] = py
 scripts/
   main.py                      # try / test / compare / train models (settings at the top of the file)
 tests/test_smoke.py            # runs the smoke test under pytest (CI: .github/workflows/ci.yml)
-report.md                      # review findings: GRPO batching bug + trace, GRPO variety, data issues, open decisions
+report.md                      # open decisions + gotchas for future runs (read before training/final runs)
 docs/paper/                    # revised methodology (ladder)
 ```
 
