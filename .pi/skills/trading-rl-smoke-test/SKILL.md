@@ -15,7 +15,18 @@ All paths below are relative to this skill directory. Run the commands from the 
 python3 scripts/smoke.py
 ```
 
-It checks every reward status and its reward value, `<think>` stripping, the prompt round-trip, the TRL reward function, the timeout (on the main thread and in a thread), and `evaluate_symbol` + `save_strategy` including `plot_1.png`.
+It checks:
+- every reward status and its reward value, and `<think>` stripping;
+- extraction edge cases (trailing prose, several fences, unclosed fence, indentation) and the AST method check;
+- the prompt round-trip;
+- the TRL reward function: per-row symbols from dataset columns and from prompts, memoisation, and the worker pool;
+- `RewardConfig` metrics, costs, CAGR, `n_orders`, clipping and names;
+- `ScoringPool`: hard timeout on a C-level loop, a crashed worker, printing code, parity with in-process scoring;
+- symbol sets, `bar_issues`, the disk cache, `append_csv` schema growth;
+- the timeout on the main thread and in a thread;
+- `evaluate_symbol` + `save_strategy`, including `plot_1.png`.
+
+`pytest` (from the repo root) runs this same script via `tests/test_smoke.py`. CI runs it too.
 
 For the ladder it checks:
 - the few-shot examples run;
@@ -42,9 +53,10 @@ python3 scripts/run_notebook.py path/to/notebook.ipynb --ollama \
 
 ## What can't be tested here
 
-`trading_rl/model.py` and `unsloth/main.py` need unsloth/CUDA. Check them statically with the `notebook-editing` skill's `nb_lint.py` and `uvx pyflakes`, and tell the user they were not executed.
+`trading_rl/model.py` and `scripts/main.py` need unsloth/CUDA. Check them statically with `ruff check .`, and tell the user they were not executed.
 
 ## Stub details
 
-- `stubs.install_fake_bars()` patches `Backtester.get_bars` to return a deterministic random walk per symbol and fills the shared class-level cache. You can also put a custom frame in `Backtester._cache[(symbol, str(timeframe), start, end)]`; bars need `open/high/low/close/volume` columns and a tz-aware index.
+- `stubs.install_fake_bars()` patches `Backtester._fetch_bars` to return a deterministic random walk per symbol. It also sets `Backtester.DEFAULT_CACHE_DIR = None` so synthetic bars never reach the disk cache, so call it before creating Backtesters.
+- You can also put a custom frame in `Backtester._cache[Backtester.cache_key(symbol, start, end)]`. Bars need `open/high/low/close/volume` columns and a tz-aware index.
 - Synthetic prices are not realistic, so check statuses and plumbing, not return values.

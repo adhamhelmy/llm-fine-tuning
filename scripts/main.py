@@ -2,10 +2,10 @@
 
 Edit the SETTINGS below, then run one of:
 
-    python unsloth/main.py try       # 1 strategy from MODELS[0], printed in full
-    python unsloth/main.py test      # MODELS[0] on every config in CONFIGS, with a report
-    python unsloth/main.py compare   # every model in MODELS on the same CONFIGS, side by side
-    python unsloth/main.py train     # GRPO on MODELS[0] (CUDA only)
+    python scripts/main.py try       # 1 strategy from MODELS[0], printed in full
+    python scripts/main.py test      # MODELS[0] on every config in CONFIGS, with a report
+    python scripts/main.py compare   # every model in MODELS on the same CONFIGS, side by side
+    python scripts/main.py train     # GRPO on MODELS[0] (CUDA only)
 
 Alpaca keys (and HF_TOKEN for training) are read from the environment or from .env.
 
@@ -15,31 +15,32 @@ Copy-paste commands (run from the repo root):
     python .pi/skills/trading-rl-smoke-test/scripts/smoke.py
 
     # 2. one strategy, to check the setup end to end
-    python unsloth/main.py try
+    python scripts/main.py try
 
     # 3. dev-split ladder run (edit CONFIGS below first)
-    python unsloth/main.py test
+    python scripts/main.py test
 
     # 4. final numbers: set SPLIT = 'test' below, then
-    python unsloth/main.py test
+    python scripts/main.py test
 
     # 5. base vs GRPO adapter: list both in MODELS below, then
-    python unsloth/main.py compare
+    python scripts/main.py compare
 
     # 6. robustness report on a results CSV
     python -c "from trading_rl import Backtester; from trading_rl.robustness import full_report; full_report('ladder_results/qwen3.8-27b-mlx/eval_test.csv', Backtester(), out_dir='ladder_results/qwen3.8-27b-mlx/robustness')"
 
     # GRPO training (CUDA machine only)
     pip install -e ".[train]"
-    python unsloth/main.py train
+    python scripts/main.py train
 """
 
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, REPO)
 
-from trading_rl import LadderConfig
+from trading_rl import LadderConfig, RewardConfig
 
 # ── SETTINGS ───────────────────────────────────────────────────────────────────
 
@@ -60,7 +61,14 @@ CONFIGS = [
 SPLIT     = 'dev'      # 'dev' while experimenting; 'test' only for final numbers
 SYMBOLS   = 'dow30'    # 'dow30', 'mag7', 'training', or 'AAPL,MSFT'
 N_SAMPLES = 1          # strategies per (config, symbol)
-OUT_DIR   = 'ladder_results'
+OUT_DIR   = os.path.join(REPO, 'ladder_results')
+
+# Reward for training AND evaluation (keep them equal). RewardConfig() = avg annual return with
+# 'low' costs (1 bp commission + 2 bps slippage per side); RewardConfig.original() = the
+# frictionless reward of the first runs. Other metrics: 'cagr', 'sharpe', 'calmar',
+# 'excess_cagr', or any fn(result) -> float. See trading_rl/rewards.py.
+REWARD = RewardConfig()
+WORKERS = None         # backtest subprocesses (None: cpu_count - 1, max 8; 0: in-process)
 
 TEMPERATURE    = 1.0
 MAX_NEW_TOKENS = 1536
@@ -71,7 +79,7 @@ OLLAMA_URL     = 'http://localhost:11434'
 
 def load_env():
     """Read KEY=VALUE lines from .env into os.environ (existing variables win)."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env')
+    path = os.path.join(REPO, '.env')
     if os.path.exists(path):
         for line in open(path):
             if '=' in line and not line.startswith('#'):
@@ -166,11 +174,11 @@ def try_model():
 
     print(f"{model_label(MODELS[0])} | {config.name} | {symbol} {start} -> {end}")
     rec = generate_strategy(load_model(MODELS[0], stream=True), config, backtester, symbol, start, end,
-                            log=print)
+                            log=print, reward=REWARD)
     print("\n" + "=" * 30 + " FINAL STRATEGY " + "=" * 30)
     print(rec['strategy_code'] or '(no code)')
-    print(f"\nstatus: {rec['status']}  reward: {rec['reward_score']}  "
-          f"annual return: {rec['avg_annual_return_pct']}  LLM calls: {rec['llm_calls']}")
+    print(f"\nstatus: {rec['status']}  reward: {rec['reward_score']} ({rec['reward']})  "
+          f"annual return: {rec['avg_annual_return_pct']}  CAGR: {rec['cagr_pct']}  LLM calls: {rec['llm_calls']}")
     if rec['error']:
         print(f"error: {rec['error']}")
 
@@ -178,19 +186,22 @@ def try_model():
 def run(models):
     """Evaluate each model on every config. Results go to a resumable CSV per model."""
     import pandas as pd
-    from trading_rl import baseline_table, resolve_symbols, run_ablation
+    from trading_rl import ScoringPool, baseline_table, resolve_symbols, run_ablation
     symbols, (start, end) = resolve_symbols(SYMBOLS), split_window()
     backtester = make_backtester(symbols, start, end)
-    baselines = baseline_table(backtester, symbols, start, end)
+    baselines = baseline_table(backtester, symbols, start, end, reward=REWARD)
 
     results = []
-    for model in models:
-        label = model_label(model)
-        os.makedirs(f'{OUT_DIR}/{label}', exist_ok=True)
-        csv = f'{OUT_DIR}/{label}/eval_{SPLIT}.csv'
-        print(f"\n### {label} -> {csv}")
-        results.append(run_ablation(load_model(model), backtester, CONFIGS, symbols, start, end,
-                                    N_SAMPLES, csv, model=label))
+    # one worker is enough here (generation is sequential); it gives a hard backtest timeout
+    with ScoringPool(workers=1) as pool:
+        for model in models:
+            label = model_label(model)
+            os.makedirs(f'{OUT_DIR}/{label}', exist_ok=True)
+            csv = f'{OUT_DIR}/{label}/eval_{SPLIT}.csv'
+            print(f"\n### {label} -> {csv}")
+            results.append(run_ablation(load_model(model), backtester, CONFIGS, symbols, start, end,
+                                        N_SAMPLES, csv, model=label, reward=REWARD,
+                                        pool=pool if WORKERS != 0 else None))
     return pd.concat(results), baselines
 
 
@@ -227,9 +238,12 @@ def train_model():
 
     model = Unsloth(model_name=name, max_seq_length=1024, lora_adapter_path=adapter)
     steps = 100
+    # Dataset rows carry symbol/start/end columns, so each completion is scored on its own
+    # window (a TRL reward call holds generation_batch_size completions from several prompts).
     model.train(
         steps=steps,
-        reward_functions=[make_strategy_reward(backtester, save_dir='successful_strategies')],
+        reward_functions=[make_strategy_reward(backtester, reward=REWARD, workers=WORKERS,
+                                               save_dir='successful_strategies')],
         dataset=dataset,
         hub_model_id=model.hf_repo_name(steps),
         hf_token=os.environ.get('HF_TOKEN'),
@@ -242,5 +256,5 @@ if __name__ == '__main__':
     load_env()
     action = sys.argv[1] if len(sys.argv) > 1 else 'try'
     if action not in ACTIONS:
-        sys.exit(f"usage: python unsloth/main.py [{'|'.join(ACTIONS)}]")
+        sys.exit(f"usage: python scripts/main.py [{'|'.join(ACTIONS)}]")
     ACTIONS[action]()

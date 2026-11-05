@@ -44,16 +44,15 @@ def fake_frame(symbol, start, end, drift=0.0008, vol=0.02):
 
 
 def install_fake_bars(**frame_kwargs):
-    """Replace Backtester.get_bars so no Alpaca call is ever made (fills the shared cache)."""
+    """Replace Backtester._fetch_bars so no Alpaca call is ever made, and turn off the disk
+    cache so synthetic bars never land in ~/.cache. Call before creating Backtesters."""
     from trading_rl.backtest import Backtester
 
-    def get_bars(self, symbol, start, end, timeframe=None):
-        key = (symbol, str(timeframe), start, end)
-        if key not in Backtester._cache:
-            Backtester._cache[key] = fake_frame(symbol, start, end, **frame_kwargs)
-        return Backtester._cache[key]
+    def _fetch_bars(self, symbol, start, end, timeframe='day'):
+        return fake_frame(symbol, start, end, **frame_kwargs)
 
-    Backtester.get_bars = get_bars
+    Backtester._fetch_bars = _fetch_bars
+    Backtester.DEFAULT_CACHE_DIR = None
 
 
 def install_fake_ollama(outputs=None, models=('llama3.2:3b',)):

@@ -51,11 +51,130 @@ p = tr.make_prompt(SYM, START, END)
 check("prompt params", tr.extract_trading_parameters(p) == (SYM, START, END))
 check("compact prompt", len(tr.make_prompt(SYM, START, END, compact=True)) < len(p))
 
-# 4. TRL reward function
-fn = tr.make_strategy_reward(bt, timeout=2)
+# 4. TRL reward function (in-process and with a worker pool)
+fn = tr.make_strategy_reward(bt, timeout=2, workers=0)
 rewards = fn([[{'content': stubs.SAMPLE_OUTPUTS['no_trades']}], [{'content': stubs.SAMPLE_OUTPUTS['missing_methods']}]],
              prompts=[[{'role': 'user', 'content': p}]] * 2)
 check("reward fn", list(rewards) == [-1, -10], str(rewards))
+
+# A TRL reward call holds several prompts: each completion must use its OWN row's window.
+from trading_rl.dataset import build_rows
+rows = build_rows(['AAPL', 'MSFT'], START, END)
+check("dataset columns", rows[1]['symbol'] == 'MSFT' and rows[1]['start'] == START and 'prompt' in rows[1])
+good = stubs.SAMPLE_OUTPUTS['profitable']
+per_row = [tr.score_strategy(tr.extract_function(good), bt, s, START, END).reward for s in ('AAPL', 'MSFT')]
+batch = dict(completions=[[{'content': good}]] * 4, prompts=[r['prompt'] for r in rows for _ in (0, 1)],
+             symbol=['AAPL', 'AAPL', 'MSFT', 'MSFT'], start=[START] * 4, end=[END] * 4)
+check("reward per row (kwargs)", fn(**batch) == [per_row[0]] * 2 + [per_row[1]] * 2 and per_row[0] != per_row[1],
+      f"{per_row}")
+no_kw = {k: batch[k] for k in ('completions', 'prompts')}
+check("reward per row (prompt)", fn(**no_kw) == [per_row[0]] * 2 + [per_row[1]] * 2)
+
+runs = []
+_orig_run0 = tr.Backtester.run
+tr.Backtester.run = lambda self, *a, **k: (runs.append(a[1]), _orig_run0(self, *a, **k))[1]
+fresh = tr.make_strategy_reward(bt, timeout=2, workers=0)
+fresh(**batch); fresh(**batch)
+tr.Backtester.run = _orig_run0
+check("reward memo", runs == ['AAPL', 'MSFT'], str(runs))
+
+pooled = tr.make_strategy_reward(bt, timeout=2, workers=2)
+check("reward fn (pool)", pooled(**batch) == [per_row[0]] * 2 + [per_row[1]] * 2)
+pooled.pool().close()
+
+# 4b. extraction edge cases
+body = "class Strategy(bt.Strategy):\n    def __init__(self):\n        pass\n    def next(self):\n        pass\n"
+for label, text in {
+    'trailing prose': body + "\nThis strategy buys dips.",
+    'fence + prose': "```python\n" + body + "```\nExplanation.",
+    'later fence': "```bash\npip install x\n```\n```python\n" + body + "```",
+    'unclosed fence': "```python\n" + body,
+    'indented': "Code:\n" + "\n".join("    " + l for l in body.splitlines()) + "\nDone.",
+    'col-0 comment': body.replace("    def next", "# trading logic\n    def next"),
+}.items():
+    code = tr.extract_function(text)
+    check(f"extract: {label}", code is not None and tr.validate_code(code) is None and tr.has_required_functions(code),
+          repr(code)[:120])
+check("methods via ast (comment doesn't count)",
+      not tr.has_required_functions("class Strategy(bt.Strategy):\n    # def __init__(self):\n    def next(self): pass\n"))
+broken = "class Strategy(bt.Strategy):\n    def __init__(self):\n        x = (\n    def next(self): pass\n"
+check("syntax error -> invalid_code", tr.score_strategy(broken, bt, SYM, START, END).status == 'invalid_code')
+
+# 4c. reward configs, costs, CAGR, traded
+code = tr.extract_function(good)
+orig = tr.score_strategy(code, bt, SYM, START, END, reward=tr.RewardConfig.original())
+dflt = tr.score_strategy(code, bt, SYM, START, END)
+check("costs lower the return", dflt.result.return_pct < orig.result.return_pct,
+      f"{orig.result.return_pct:.2f} -> {dflt.result.return_pct:.2f}")
+r = dflt.result
+check("cagr + orders", r.n_orders > 2 and r.traded and abs(r.cagr_pct) > 0 and
+      abs((1 + r.cagr_pct / 100) ** 2 - (1 + r.return_pct / 100)) < 0.02, str(r))
+for metric, expect in (('cagr', max(r.cagr_pct, 1)), ('return', max(r.return_pct, 1)),
+                       ('sharpe', max(r.sharpe_ratio or 0, 1))):
+    got = tr.score_strategy(code, bt, SYM, START, END, reward=tr.RewardConfig(metric)).reward
+    check(f"metric {metric}", abs(got - expect) < 1e-9 if r.return_pct > 0 else got == 0, f"{got} vs {expect}")
+custom = tr.RewardConfig(lambda res: res.cagr_pct - res.max_drawdown_pct, floor=None, loss=None)
+check("custom metric", abs(tr.score_strategy(code, bt, SYM, START, END, reward=custom).reward
+                           - (r.cagr_pct - r.max_drawdown_pct)) < 1e-9)
+bh = tr.benchmark_result(bt, SYM, START, END)
+ex = tr.score_strategy(code, bt, SYM, START, END, reward=tr.RewardConfig('excess_cagr', floor=None, loss=None))
+check("excess_cagr metric", abs(ex.reward - (r.cagr_pct - bh.cagr_pct)) < 1e-9 and bh.n_orders == 1,
+      f"{ex.reward:.2f}")
+check("clip", tr.score_strategy(code, bt, SYM, START, END, reward=tr.RewardConfig(clip=(None, 0.5))).reward <= 0.5)
+check("reward names", tr.RewardConfig().name == 'avg_annual,costs=low'
+      and tr.RewardConfig.original().name == 'avg_annual,costs=none'
+      and tr.RewardConfig('sharpe', costs=(0, 5), loss=None).name == 'sharpe,costs=0+5bps,loss=None')
+loser = tr.BacktestResult(-5.0, -0.3, -2.0, 10.0, -2.5, 4)
+check("loss rewards", tr.RewardConfig().score(loser) == ('loss', 0)
+      and tr.RewardConfig('cagr', loss=None, clip=(-0.99, None)).score(loser) == ('loss', -0.99)
+      and tr.RewardConfig().score(loser._replace(n_orders=0)) == ('no_trades', -1))
+
+# 4d. subprocess pool: hard timeout (C-level loop SIGALRM can't break), crash, print, parity
+from trading_rl.scoring import ScoringPool
+C_LOOP = body.replace("    def next(self):\n        pass", "    def next(self):\n        sum(range(10 ** 12))")
+CRASH = "import os\n" + body.replace("    def next(self):\n        pass", "    def next(self):\n        os._exit(3)")
+PRINTS = body.replace("    def next(self):\n        pass", "    def next(self):\n        print('noise' * 100)\n        if not self.position: self.buy()")
+with ScoringPool(workers=2, timeout=1, grace=1) as pool:
+    t = time.time()
+    outs = tr.score_many([(C_LOOP, SYM, START, END), (CRASH, SYM, START, END), (PRINTS, SYM, START, END),
+                          (code, 'MSFT', START, END)], bt, timeout=1, pool=pool)
+    check("pool: hard timeout", outs[0].status == 'timeout' and time.time() - t < 15, f"{time.time() - t:.1f}s")
+    check("pool: crash contained", outs[1].status == 'exception' and 'WorkerCrashed' in outs[1].error, str(outs[1]))
+    check("pool: print-safe", outs[2].status in ('profitable', 'loss'), str(outs[2])[:120])
+    inproc = tr.score_strategy(code, bt, 'MSFT', START, END)
+    check("pool == in-process", outs[3].reward == inproc.reward and outs[3].result == inproc.result)
+    check("pool recovers", tr.score_strategy(code, bt, SYM, START, END, pool=pool).reward == dflt.reward)
+    exc = tr.score_strategy(tr.extract_function(stubs.SAMPLE_OUTPUTS['exception']), bt, SYM, START, END, pool=pool)
+    check("pool: exception line", exc.status == 'exception' and 'ZeroDivisionError (line' in exc.error, exc.error)
+
+# 4e. symbols, data checks, disk cache, CSV schema evolution
+check("resolve_symbols dedupe", tr.resolve_symbols(['aapl', 'AAPL ', 'msft']) == ['AAPL', 'MSFT']
+      and tr.resolve_symbols('aapl, msft,aapl') == ['AAPL', 'MSFT'])
+check("symbol sets", len(tr.TRAINING_SYMBOLS) == 38 == len(set(tr.TRAINING_SYMBOLS))
+      and len(set(tr.DOW30)) == 30 and 'INTC' not in tr.TRAINING_SYMBOLS)
+check("usable_symbols", tr.usable_symbols(['AAPL', 'COIN', 'NIO'], '2016-01-01') == ['AAPL']
+      and tr.usable_symbols(['COIN', 'NIO'], '2022-01-01') == ['COIN', 'NIO'])
+flat = stubs.fake_frame('X', '2020-01-01', '2020-06-30')
+flat.iloc[10:60, flat.columns.get_loc('close')] = flat['close'].iloc[10]
+flat.iloc[10:60, flat.columns.get_loc('volume')] = 0
+check("bar_issues", tr.bar_issues(flat) and not tr.bar_issues(stubs.fake_frame('X', '2020-01-01', '2020-06-30'))
+      and tr.bar_issues(pd.DataFrame()) == ['no bars'])
+with tempfile.TemporaryDirectory() as d:
+    cached = tr.Backtester(verbose=False, cache_dir=d)
+    cached.get_bars('ZZZ', START, END)
+    tr.Backtester._cache.pop(('ZZZ', 'day', START, END))
+    fetches = []
+    _f = tr.Backtester._fetch_bars
+    tr.Backtester._fetch_bars = lambda self, *a, **k: (fetches.append(a), _f(self, *a, **k))[1]
+    again = tr.Backtester(verbose=False, cache_dir=d).get_bars('ZZZ', START, END)
+    tr.Backtester._fetch_bars = _f
+    check("disk cache", not fetches and len(again) > 400 and os.listdir(d) == ['ZZZ_day_2020-01-01_2021-12-31.pkl'])
+    out = os.path.join(d, 'r.csv')
+    tr.append_csv(out, {'a': 1, 'b': 2})
+    tr.append_csv(out, {'a': 3, 'b': 4, 'c': 5})
+    tr.append_csv(out, {'a': 6})
+    got = pd.read_csv(out)
+    check("append_csv schema", list(got.columns) == ['a', 'b', 'c'] and got['a'].tolist() == [1, 3, 6])
 
 # 5. timeout off the main thread (daemon-thread fallback)
 import threading
@@ -201,9 +320,11 @@ check("turnover/trades", f.at['none', 'n_trades'] > 300 and f.at['none', 'turnov
 bh = rb[(rb['config'] == 'buy_and_hold') & (rb['cost'] == 'none') & (rb['symbol'] == 'AAPL')].iloc[0]
 check("year columns", all(f'year_{y}' in rb for y in (2022, 2023, 2024)) and bh['n_trades'] == 1
       and bh['volatility_pct'] > 0)
-plain = tr.score_strategy(SMA, bt, 'AAPL', RS, RE).result
-same = rb[(rb['config'] == 'sma') & (rb['symbol'] == 'AAPL') & (rb['sample'] == 1) & (rb['cost'] == 'none')].iloc[0]
-check("cost 'none' == training backtest", abs(plain.return_pct - same['return_pct']) < 1e-9)
+sma_rows = rb[(rb['config'] == 'sma') & (rb['symbol'] == 'AAPL') & (rb['sample'] == 1)].set_index('cost')
+plain = tr.score_strategy(SMA, bt, 'AAPL', RS, RE, reward=tr.RewardConfig.original()).result
+check("cost 'none' == original reward backtest", abs(plain.return_pct - sma_rows.at['none', 'return_pct']) < 1e-9)
+costly = tr.score_strategy(SMA, bt, 'AAPL', RS, RE, reward=tr.RewardConfig(costs='high')).result
+check("cost 'high' == RewardConfig(costs='high')", abs(costly.return_pct - sma_rows.at['high', 'return_pct']) < 1e-9)
 cr = R.cost_report(rb)
 check("cost report", len(cr) == 4 and cr['bh_annual'].notna().all()
       and cr.set_index(['config', 'cost']).at[('flip', 'high'), 'beat_bh'] == 0.0)

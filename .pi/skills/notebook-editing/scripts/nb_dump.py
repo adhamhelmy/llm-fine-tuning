@@ -2,7 +2,7 @@
 
     python nb_dump.py path/to/notebook.ipynb            # all cells
     python nb_dump.py path/to/notebook.ipynb 6 9-12     # selected cells / ranges
-    python nb_dump.py unsloth/*.ipynb --out /tmp/nbsrc         # one .py per notebook (for grep/diff)
+    python nb_dump.py path/to/*.ipynb --out /tmp/nbsrc         # one .py per notebook (for grep/diff)
 """
 
 import argparse

@@ -11,14 +11,15 @@ The model is prompted to write a `class Strategy(bt.Strategy)`. The code is extr
 | Runtime error / timeout (10s) | -2 |
 | Never trades | -1 |
 | Loses money | 0 |
-| Profitable | `max(avg annual return %, 1)` |
+| Profitable (after costs) | `max(avg annual return %, 1)` (configurable: `RewardConfig`) |
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `trading_rl/` | Shared package: prompt, context/RAG, code extraction, backtester, rewards, evaluation, ladder ablation, Unsloth wrapper |
-| `unsloth/` | Ladder experiment notebook, `main.py` GRPO training |
+| `scripts/main.py` | Try / test / compare models, GRPO training |
+| `tests/` | Offline smoke test under pytest (synthetic bars) |
 | `docs/paper/` | Revised methodology (LLM-engineering ladder) |
 
 ## Setup
@@ -26,28 +27,37 @@ The model is prompted to write a `class Strategy(bt.Strategy)`. The code is extr
 ```bash
 pip install -e .            # backtesting + evaluation (no GPU)
 pip install -e ".[train]"   # + Unsloth/TRL for GRPO training (CUDA GPU)
+pip install -e ".[dev]"     # + pytest / ruff:  ruff check . && pytest
 ```
 
-On Colab / Kaggle, the notebooks install the package straight from GitHub:
+On Colab / Kaggle, install the package straight from GitHub:
 
 ```
 %pip install "trading-rl @ git+https://github.com/adhamhelmy/llm-fine-tuning.git"
 ```
 
-Credentials are not stored in the repo. Fill in the empty `HF_TOKEN` / `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` placeholders in a notebook, or set them as environment variables (or in a local `.env` for `strategies/tester.py`).
+Credentials are not stored in the repo. Set `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` (and `HF_TOKEN` for training) as environment variables or in a local `.env`. Downloaded bars are cached in `~/.cache/trading_rl/bars` (override with `TRADING_RL_CACHE`).
 
 ## Usage
 
-Edit the settings at the top of `unsloth/main.py` (models, ladder configs, split, symbols), then:
+Edit the settings at the top of `scripts/main.py` (models, ladder configs, split, symbols), then:
 
 ```bash
-python unsloth/main.py try       # one strategy, printed in full
-python unsloth/main.py test      # first model on every config, with a report
-python unsloth/main.py compare   # all models on the same configs (e.g. base vs. GRPO adapter)
-python unsloth/main.py train     # GRPO (CUDA)
+python scripts/main.py try       # one strategy, printed in full
+python scripts/main.py test      # first model on every config, with a report
+python scripts/main.py compare   # all models on the same configs (e.g. base vs. GRPO adapter)
+python scripts/main.py train     # GRPO (CUDA)
 ```
 
-Models can be Ollama, MLX or Unsloth. See `docs/paper/methodology.md` for the ladder.
+Models can be Ollama, MLX or Unsloth. `REWARD` in the settings picks the reward (metric + transaction costs) for both training and evaluation:
+
+```python
+from trading_rl import RewardConfig
+RewardConfig()                                        # avg annual return, 1 + 2 bps per side (default)
+RewardConfig.original()                               # frictionless, as in the first experiments
+RewardConfig('cagr')                                  # or 'sharpe', 'calmar', 'excess_cagr', ...
+RewardConfig(lambda r: r.cagr_pct - 0.5 * r.max_drawdown_pct, floor=None, loss=None)
+``` See `docs/paper/methodology.md` for the ladder.
 
 **Robustness report** (costs, vs buy-and-hold, per-asset tests, by-year): `trading_rl.robustness.full_report(results_csv, backtester, out_dir=...)`.
 

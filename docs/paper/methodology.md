@@ -2,7 +2,7 @@
 
 > Draft structured around the LLM-engineering ladder (prompt → context → harness → loop; graph not evaluated, see §3.7),
 > as requested by the reviewers. Every design element named here is implemented in the `trading_rl`
-> package (the module is given in brackets) and evaluated with `unsloth/main.py`.
+> package (the module is given in brackets) and evaluated with `scripts/main.py`.
 > **[TBD]** marks numbers that come from the ablation runs. Exact prompt texts are written to
 > `ladder_results/<model>/prompts/` by each run (`ladder.dump_prompts`).
 
@@ -29,8 +29,12 @@ lower stages**, not against a weak prompt-only baseline.
 ## 3.2 Experimental protocol
 
 **Data.** Daily split- and dividend-adjusted bars from Alpaca's historical data API for a 30-stock
-US large-cap universe (Dow-30-like; `config.TESTER_SYMBOLS`). The GRPO training set uses the
-38-symbol `TRAINING_SYMBOLS`.
+US large-cap universe (the Dow 30 as of 2020-08 – 2024-02; `config.DOW30`). The GRPO training set
+uses the 38-symbol `TRAINING_SYMBOLS`. Alpaca forward-fills inactive tickers with flat, zero-volume
+bars, so three training symbols are unusable for part of the train split (`config.SYMBOL_ISSUES`):
+COIN (no bars before its 2021 IPO), NIO (a Nuveen municipal-bond fund's ticker until the 2018 IPO)
+and DOW (flat from the 2017 DowDuPont merger to the 2019 spin-off). **[Drop them or start their
+windows at the valid date in the final training run (`config.usable_symbols`).]**
 
 **Time splits** (`config.py`). The splits do not overlap and are used for different purposes:
 
@@ -154,13 +158,16 @@ from *financial* context:
 ## 3.5 Stage 3 – Harness engineering (`codegen.py`, `backtest.py`, `rewards.py`, `ladder.py`)
 
 1. **Extraction.** Reasoning blocks (`<think>…</think>`) are removed. The class is taken from the
-   first fenced code block, or from the raw text starting at `class Strategy(bt.Strategy):`.
-2. **Static validation.** The code is checked for the required methods and parsed with Python's
-   `ast`, and any import outside the standard library is rejected.
+   first fenced code block that contains `class Strategy(bt.Strategy):` (else from the raw text), and
+   ends at the first line that is not indented under the class, so trailing explanations are dropped.
+2. **Static validation.** The code is parsed with Python's `ast`; `class Strategy` must define
+   `__init__` and `next`, and any import outside the standard library is rejected.
 3. **Execution.** The code is `exec`'d with only `bt` in scope, then backtested with Backtrader:
-   - $10,000 initial cash and no commission;
-   - Sharpe, annual-return and drawdown analyzers;
-   - a 10-second wall-clock limit (SIGALRM, with a thread fallback when not on the main thread).
+   - $10,000 initial cash; transaction costs of 1 bp commission + 2 bps slippage per side
+     (`RewardConfig.costs`, default `'low'`; the robustness report adds 0, 10 and 25 bps levels);
+   - Sharpe, annual-return, drawdown and CAGR;
+   - a 10-second limit, enforced in a worker subprocess that is killed if it overruns
+     (`scoring.ScoringPool`), so loops stuck in C code cannot stall training.
 4. **Dry run and repair** (the variable in this stage). The candidate is backtested on the feedback
    window. If it fails, the model receives its previous code and a precise error message, e.g.
    `ZeroDivisionError (line 12): …` (the line number refers to the generated code), or "the strategy
@@ -186,7 +193,8 @@ without updating any weights.
 - **Training prompts.** Built with the **selected prompt and context configuration**
   (`ladder.prompt_fn(best)`), one per training symbol, over the train split. Harness and loop steps
   happen at inference time and are not part of the training prompt.
-- **Reward.** The same outcome taxonomy, mapped to a scalar:
+- **Reward** (`rewards.RewardConfig`, identical for training and evaluation). The same outcome
+  taxonomy, mapped to a scalar:
 
   | Status | Reward |
   |---|---|
@@ -198,7 +206,13 @@ without updating any weights.
   | profitable | max(average annual return %, 1) |
 
   The ordering encodes a curriculum: first produce a class, then valid code, then code that runs,
-  then code that trades, then code that makes money.
+  then code that trades, then code that makes money. "Profitable" is measured after transaction
+  costs. The metric of a profitable strategy is configurable (average annual return as above, CAGR,
+  Sharpe, Calmar, CAGR in excess of buy-and-hold, or a custom function); `RewardConfig.original()`
+  is the frictionless reward of the first experiments. **[State the final choice.]**
+- **Scoring.** Each completion is scored on its own prompt's symbol and window (dataset columns).
+  A TRL reward call contains a full generation batch (per-device batch × gradient accumulation
+  = 8 completions, i.e. 4 prompts at G = 2), scored in parallel in worker processes.
 - **Optimization.** Unsloth with a 4-bit base model and LoRA (r = 32, α = 64, applied to the
   attention and MLP projections), via TRL's `GRPOTrainer`:
   - learning rate 5·10⁻⁶ (linear schedule, 10% warm-up), AdamW-8bit, weight decay 0.01;
@@ -222,8 +236,8 @@ variant is implemented (`LadderConfig(analyst=True)`) but is not part of the lad
 - **Selection bias:** every choice is made on dev; test is used once per rung.
 - **Multiple comparisons:** we report CIs and paired tests for adjacent rungs only. **[Optionally
   apply a Holm correction.]**
-- **Market frictions:** no commissions or slippage; long-only strategies are typical. **[Consider
-  adding 5–10 bps per trade.]**
+- **Market frictions:** 3 bps per side in the reward; the robustness report re-runs every strategy at
+  0, 10 and 25 bps. Long-only strategies are typical.
 - **Universe:** US large caps, 2016–2024, daily bars only.
 - **Compute:** greedy selection does not explore every combination of stages. Interactions between
   stages are only partly covered, by the "all three" context variant.

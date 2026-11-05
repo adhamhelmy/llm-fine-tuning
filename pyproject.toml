@@ -4,19 +4,33 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trading-rl"
-version = "0.1.0"
+version = "0.2.0"
 description = "Shared backtesting, prompt and reward code for GRPO-tuning LLMs to write Backtrader strategies"
 requires-python = ">=3.10"
 dependencies = [
-    "backtrader",
-    "alpaca-trade-api",
-    "pandas",
-    "matplotlib",
+    "backtrader>=1.9.78,<2",     # unmaintained upstream; 1.9.78.123 is the last release
+    "alpaca-py>=0.30,<1",        # historical bars (replaces the deprecated alpaca-trade-api)
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
 ]
 
 [project.optional-dependencies]
 # GPU training / inference (trading_rl.model, trading_rl.dataset)
 train = ["unsloth", "trl==0.22.2", "datasets", "peft", "plotly"]
+dev = ["pytest>=7", "ruff>=0.5"]
 
 [tool.setuptools]
 packages = ["trading_rl"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = [".venv", "ladder_results", "outputs"]
+
+[tool.ruff.lint]
+# pyflakes + syntax errors only: catches real bugs without restyling the code base
+select = ["E9", "F"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

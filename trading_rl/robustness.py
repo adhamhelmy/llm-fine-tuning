@@ -34,15 +34,8 @@ import pandas as pd
 from .backtest import Backtester, call_with_timeout
 from .baselines import BASELINES
 from .codegen import extract_strategy, validate_code
-from .ladder import bootstrap_mean, wilson
-
-# (commission_bps, slippage_bps) per side. 'none' reproduces the frictionless training reward.
-COST_LEVELS = {
-    'none': (0, 0),
-    'low': (1, 2),       # ~3 bps per side: liquid large caps, retail commission-free broker
-    'mid': (5, 5),       # 10 bps per side
-    'high': (10, 15),    # 25 bps per side: conservative / less liquid names
-}
+from .config import COST_LEVELS  # noqa: F401  (re-exported; 'low' is the default reward's level)
+from .ladder import append_csv, bootstrap_mean, wilson
 
 # Calendar-year market regime of the TEST split (S&P 500: 2022 -19%, 2023 +24%, 2024 +23%).
 REGIMES = {2022: 'bear', 2023: 'bull', 2024: 'bull'}
@@ -70,8 +63,8 @@ def rebacktest(results, backtester: Backtester, cost_levels=None, baselines=('bu
     """Re-run every traded strategy in `results` (+ baselines per symbol/window) at each cost
     level. Returns one row per (strategy, cost level). Resumable when out_csv is given.
 
-    The 'none' level is a frictionless re-run, so its numbers should match the original
-    evaluation; status 'error' rows are strategies that raised or timed out on re-run."""
+    The level matching the evaluation's RewardConfig.costs ('low' by default, 'none' for
+    RewardConfig.original()) should reproduce the evaluation's numbers; status 'error' rows are strategies that raised or timed out on re-run."""
     cost_levels = cost_levels or COST_LEVELS
     df = _load(results)
     for col, default in (('model', ''), ('config', 'baseline'), ('sample', 1)):
@@ -113,8 +106,7 @@ def rebacktest(results, backtester: Backtester, cost_levels=None, baselines=('bu
                 rec.update(rerun_status='error', error=str(e)[:200])
             rows.append(rec)
             if out_csv:
-                pd.DataFrame([rec]).to_csv(out_csv, mode='a', index=False,
-                                           header=not os.path.exists(out_csv))
+                append_csv(out_csv, rec)
             if i % 50 == 0:
                 print(f"  rebacktest [{i}/{total}]")
     if out_csv:

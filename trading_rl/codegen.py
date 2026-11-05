@@ -9,6 +9,8 @@ import backtrader as bt
 CLASS_HEADER = "class Strategy(bt.Strategy):"
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+_HEADER_RE = re.compile(r"^([ \t]*)class\s+Strategy\s*\(\s*bt\.Strategy\s*\)\s*:", re.MULTILINE)
+_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)(?:```|\Z)", re.DOTALL)
 _INIT_RE = re.compile(r'def\s+__init__\s*\([^)]*\)\s*:')
 _NEXT_RE = re.compile(r'def\s+next\s*\([^)]*\)\s*:')
 _STDLIB = {m.lower() for m in sys.stdlib_module_names}
@@ -19,23 +21,71 @@ def strip_thinking(text: str) -> str:
     return _THINK_RE.sub("", text or "").strip()
 
 
+def _parses(code):
+    try:
+        ast.parse(code)
+        return True
+    except SyntaxError:
+        return False
+
+
+def _cut_class(text):
+    """The `class Strategy(bt.Strategy):` block in text, up to the first non-blank, non-comment
+    line not indented deeper than the header (trailing prose, closing fence, next definition).
+    The block is dedented so the header starts at column 0. None if there is no header."""
+    m = _HEADER_RE.search(text)
+    if not m:
+        return None
+    indent = len(m.group(1))
+    lines = text[m.start():].splitlines()
+    body = [lines[0]]
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped and not stripped.startswith('#') and len(line) - len(line.lstrip()) <= indent:
+            break
+        body.append(line)
+    code = "\n".join(line[indent:] for line in body).rstrip() + "\n"
+    if not _parses(code):
+        # e.g. a docstring line at column 0: fall back to everything after the header,
+        # if that parses (otherwise keep the cut block; it fails validation either way).
+        rest = "\n".join(line[indent:] for line in lines).rstrip() + "\n"
+        if _parses(rest):
+            return rest
+    return code
+
+
 def extract_function(text: str):
-    """Extract the `class Strategy(bt.Strategy):` block from a fenced block or raw output."""
+    """Extract the `class Strategy(bt.Strategy):` block. Fenced code blocks containing the
+    class win (the first one that does); otherwise the raw text is searched. Anything after
+    the class body (explanations, usage examples, a closing fence) is dropped."""
     text = strip_thinking(text)
-    if text.count("```") >= 2:
-        first = text.find("```") + 3
-        second = text.find("```", first)
-        fx = text[first:second].strip().removeprefix("python\n")
-        fx = fx[fx.find("class Strategy"):]
-        if fx.startswith(CLASS_HEADER):
-            return fx
-    idx = text.find(CLASS_HEADER)
-    return text[idx:] if idx != -1 else None
+    for block in _FENCE_RE.findall(text):
+        code = _cut_class(block)
+        if code:
+            return code
+    return _cut_class(text)
+
+
+def _strategy_methods(code):
+    """Method names defined directly in `class Strategy`, or None if the code doesn't parse."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "Strategy":
+            return {n.name for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    return set()
 
 
 def has_required_functions(code) -> bool:
+    """True if class Strategy defines __init__ and next. Code with a syntax error falls back
+    to a regex, so it is scored as invalid_code (-3) rather than missing_methods (-10)."""
     code = code or ""
-    return bool(_INIT_RE.search(code)) and bool(_NEXT_RE.search(code))
+    methods = _strategy_methods(code)
+    if methods is None:
+        return bool(_INIT_RE.search(code)) and bool(_NEXT_RE.search(code))
+    return {"__init__", "next"} <= methods
 
 
 def check_python_modules(code: str):
@@ -79,3 +129,11 @@ def extract_strategy(code: str):
     namespace = {'bt': bt}
     exec(code, namespace)
     return namespace['Strategy']
+
+
+def describe_exception(e: BaseException) -> str:
+    """'TypeError (line 7): ...' where the line is inside the generated code, if known."""
+    import traceback
+    lines = [f.lineno for f in traceback.extract_tb(e.__traceback__) if f.filename == '<string>']
+    loc = f" (line {lines[-1]})" if lines else ""
+    return f"{type(e).__name__}{loc}: {e}"[:300]

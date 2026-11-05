@@ -27,14 +27,14 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 
-from .backtest import Backtester, resolve_symbols
+from .backtest import Backtester, BacktestResult, resolve_symbols
 from .baselines import BASELINES
 from .codegen import extract_function, strip_thinking
 from .config import FEEDBACK_YEARS
 from .context import api_reference, few_shot_examples, format_market_summary, market_stats
 from .knowledge import KnowledgeBase
 from .prompt import make_prompt
-from .rewards import score_strategy
+from .rewards import DEFAULT_REWARD, RewardConfig, score_strategy
 
 OK_STATUSES = ('profitable', 'loss')
 VALID_STATUSES = ('profitable', 'loss', 'no_trades')
@@ -148,8 +148,9 @@ period (keep rules simple and parameters conventional). Return the complete clas
 class _Context:
     """Per-(symbol, window) context shared by all samples: stats, sections, B&H feedback."""
 
-    def __init__(self, backtester, kb):
+    def __init__(self, backtester, kb, reward: RewardConfig = None):
         self.backtester, self.kb = backtester, kb or KnowledgeBase.default()
+        self.reward = reward or DEFAULT_REWARD
         self._stats, self._bh = {}, {}
 
     def stats(self, symbol, start):
@@ -165,7 +166,8 @@ class _Context:
     def bh_annual(self, symbol, start, end):
         key = (symbol, start, end)
         if key not in self._bh:
-            s = score_strategy(BASELINES['buy_and_hold'], self.backtester, symbol, start, end, timeout=60)
+            s = score_strategy(BASELINES['buy_and_hold'], self.backtester, symbol, start, end, timeout=60,
+                               reward=self.reward)
             self._bh[key] = s.result.avg_annual_return_pct if s.result else float('nan')
         return self._bh[key]
 
@@ -221,10 +223,18 @@ def _repair_feedback(score):
 # ── one sample through the whole pipeline ──────────────────────────────────────
 
 def generate_strategy(generate, cfg: LadderConfig, backtester: Backtester, symbol, start, end,
-                      kb=None, timeout=10, cash=10_000, _ctx=None, log=None):
+                      kb=None, timeout=10, cash=10_000, _ctx=None, log=None,
+                      reward: RewardConfig = None, pool=None):
     """Run prompt -> (graph) -> generation -> (harness/loop on the feedback window) -> final
-    test on [start, end]. Returns a flat record. Pass log=print to trace every step."""
-    ctx = _ctx or _Context(backtester, kb)
+    test on [start, end]. Returns a flat record. Pass log=print to trace every step.
+    reward: RewardConfig for every backtest (feedback and final); pool: ScoringPool for
+    killable subprocess backtests."""
+    reward = reward or DEFAULT_REWARD
+    ctx = _ctx or _Context(backtester, kb, reward)
+
+    def score(code, s, e):
+        return score_strategy(code, backtester, symbol, s, e, cash=cash, timeout=timeout,
+                              reward=reward, pool=pool)
     log = log or (lambda *a, **k: None)
 
     def log_score(label, s):
@@ -235,9 +245,8 @@ def generate_strategy(generate, cfg: LadderConfig, backtester: Backtester, symbo
         if s.error:
             log(f"[{label}] error: {s.error}")
     rec = {'config': cfg.name, 'config_json': cfg.to_json(), 'symbol': symbol, 'start': start,
-           'end': end, 'status': None, 'reward_score': None, 'return_pct': None,
-           'sharpe_ratio': None, 'avg_annual_return_pct': None, 'max_drawdown_pct': None,
-           'strategy_code': None, 'error': None, 'llm_calls': 0, 'candidates': 1,
+           'end': end, 'status': None, 'reward_score': None, 'reward': reward.name,
+           **dict.fromkeys(BacktestResult._fields), 'strategy_code': None, 'error': None, 'llm_calls': 0, 'candidates': 1,
            'val_status': None, 'val_reward': None, 'val_avg_annual_return_pct': None,
            'spec': None, 'prompt_chars': None, 'prompt_sha': None, 'gen_seconds': 0.0}
     t0 = time.time()
@@ -264,7 +273,7 @@ def generate_strategy(generate, cfg: LadderConfig, backtester: Backtester, symbo
         if cfg.uses_feedback:
             fstart, fend = feedback_window(start)
             log(f"[feedback window] backtesting on {fstart} -> {fend} (in-sample)")
-            val = score_strategy(code, backtester, symbol, fstart, fend, cash=cash, timeout=timeout)
+            val = score(code, fstart, fend)
             log_score('feedback #1', val)
             candidates, repairs, refines = [(code, val)], 0, 0
             while True:
@@ -287,7 +296,7 @@ def generate_strategy(generate, cfg: LadderConfig, backtester: Backtester, symbo
                 why = f'repair {repairs}/{cfg.repair_rounds}' if val.status not in OK_STATUSES \
                     else f'refine {refines}/{cfg.refine_rounds}'
                 code = extract_function(call(follow, why))
-                val = score_strategy(code, backtester, symbol, fstart, fend, cash=cash, timeout=timeout)
+                val = score(code, fstart, fend)
                 candidates.append((code, val))
                 log_score(f'feedback #{len(candidates)}', val)
             # keep the best candidate by in-sample reward (latest wins ties)
@@ -303,40 +312,67 @@ def generate_strategy(generate, cfg: LadderConfig, backtester: Backtester, symbo
 
     rec['gen_seconds'] = time.time() - t0
     log(f"[final] backtesting on the evaluated window {start} -> {end}")
-    score = score_strategy(code, backtester, symbol, start, end, cash=cash, timeout=timeout)
-    log_score('final', score)
-    rec.update(strategy_code=code, status=score.status, reward_score=score.reward, error=score.error)
-    if score.result is not None:
-        rec.update(score.result._asdict())
+    final = score(code, start, end)
+    log_score('final', final)
+    rec.update(strategy_code=code, status=final.status, reward_score=final.reward, error=final.error)
+    if final.result is not None:
+        rec.update(final.result._asdict())
     return rec
 
 
+def append_csv(path, rec):
+    """Append one record to a CSV. If the record has columns the file doesn't (e.g. results
+    written before a new metric was added), the file is rewritten with the union of columns."""
+    row = pd.DataFrame([rec])
+    if not os.path.exists(path):
+        row.to_csv(path, index=False)
+        return
+    header = pd.read_csv(path, nrows=0).columns.tolist()
+    if set(row.columns) <= set(header):
+        row.reindex(columns=header).to_csv(path, mode='a', index=False, header=False)
+    else:
+        pd.concat([pd.read_csv(path), row], ignore_index=True).to_csv(path, index=False)
+
+
+def read_results(path):
+    """Read a results CSV. Rows from before the `reward` column existed were scored with the
+    original frictionless reward and are labelled as such."""
+    df = pd.read_csv(path)
+    original = RewardConfig.original().name
+    df['reward'] = df['reward'].fillna(original) if 'reward' in df else original
+    return df
+
+
 def run_ablation(generate, backtester: Backtester, configs, symbols, start, end, n_samples,
-                 out_csv, model='', kb=None, timeout=10, cash=10_000):
-    """Evaluate every config x symbol x sample; appends to out_csv and resumes from it."""
+                 out_csv, model='', kb=None, timeout=10, cash=10_000,
+                 reward: RewardConfig = None, pool=None):
+    """Evaluate every config x symbol x sample; appends to out_csv and resumes from it.
+    Rows are keyed by reward config too: changing the reward (or its costs) reruns everything
+    and only rows of the current reward are returned."""
+    reward = reward or DEFAULT_REWARD
     symbols = resolve_symbols(symbols)
     done = set()
     if os.path.exists(out_csv):
-        prev = pd.read_csv(out_csv)
-        done = set(zip(prev['model'], prev['config'], prev['symbol'], prev['start'], prev['sample']))
-    ctx = _Context(backtester, kb)
+        prev = read_results(out_csv)
+        done = set(zip(prev['model'], prev['config'], prev['symbol'], prev['start'], prev['sample'],
+                       prev['reward']))
+    ctx = _Context(backtester, kb, reward)
     total = len(configs) * len(symbols) * n_samples
     i = 0
     for cfg in configs:
         for symbol in symbols:
             for sample in range(1, n_samples + 1):
                 i += 1
-                if (model, cfg.name, symbol, start, sample) in done:
+                if (model, cfg.name, symbol, start, sample, reward.name) in done:
                     continue
                 rec = generate_strategy(generate, cfg, backtester, symbol, start, end,
-                                        timeout=timeout, cash=cash, _ctx=ctx)
+                                        timeout=timeout, cash=cash, _ctx=ctx, reward=reward, pool=pool)
                 rec.update(model=model, sample=sample)
-                pd.DataFrame([rec]).to_csv(out_csv, mode='a', index=False,
-                                           header=not os.path.exists(out_csv))
+                append_csv(out_csv, rec)
                 print(f"[{i}/{total}] {cfg.name:40.40} {symbol:5} s{sample} -> {rec['status']}"
                       + (f" ({rec['candidates']} cand.)" if rec['candidates'] > 1 else ""))
-    df = pd.read_csv(out_csv)
-    return df[(df['model'] == model) & (df['start'] == start) &
+    df = read_results(out_csv)
+    return df[(df['model'] == model) & (df['start'] == start) & (df['reward'] == reward.name) &
               (df['config'].isin([c.name for c in configs]))]
 
 
@@ -373,6 +409,9 @@ def add_indicators(df, baselines=None):
                            for s, st in zip(df['symbol'], df['start'])]
         df['beat_bh'] = df['traded'] & (df['avg_annual_return_pct'] > df['bh_annual'])
         df['excess_annual'] = df['avg_annual_return_pct'] - df['bh_annual']
+        if 'cagr_pct' in df and 'cagr_pct' in bh:
+            df['excess_cagr'] = df['cagr_pct'] - [bh['cagr_pct'].get((s, st), math.nan)
+                                                  for s, st in zip(df['symbol'], df['start'])]
     return df
 
 

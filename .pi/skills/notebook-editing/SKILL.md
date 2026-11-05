@@ -1,6 +1,6 @@
 ---
 name: notebook-editing
-description: Read, edit, clear and lint the Jupyter notebooks in unsloth/*.ipynb with minimal diffs. Use whenever a task involves changing a notebook, porting code between notebooks and trading_rl, or checking notebooks before a commit.
+description: Read, edit, clear and lint Jupyter notebooks (*.ipynb; none are tracked at the moment) with minimal diffs. Use whenever a task involves changing a notebook, porting code between notebooks and trading_rl, or checking notebooks before a commit.
 ---
 
 # Editing this repo's notebooks
@@ -9,12 +9,12 @@ The notebooks are JSON and target Colab, Kaggle, Apple Silicon (MLX) or local Ol
 
 ## Workflow
 
-1. **Read:** `python3 scripts/nb_dump.py unsloth/X.ipynb [6 9-12]` prints the cells with their **original** indexes. Use `--out /tmp/nbsrc` to dump every notebook to `.py` for grep/diff.
+1. **Read:** `python3 scripts/nb_dump.py path/to/X.ipynb [6 9-12]` prints the cells with their **original** indexes. Use `--out /tmp/nbsrc` to dump every notebook to `.py` for grep/diff.
 2. **Edit** in a Python heredoc with `scripts/nbedit.py`:
    ```python
    import sys; sys.path.insert(0, '.pi/skills/notebook-editing/scripts')
    from nbedit import NB, SETUP_CELL
-   n = NB('unsloth/X.ipynb')
+   n = NB('path/to/X.ipynb')
    n.sub(n.find('bt_instance = Backtrader()'), 'Backtrader()', 'Backtester(verbose=False)')
    n.set(6, 'import json', 'from trading_rl import Backtester')
    n.save()

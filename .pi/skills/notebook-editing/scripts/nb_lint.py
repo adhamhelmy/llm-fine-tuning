@@ -1,6 +1,6 @@
 """Static checks for notebooks: valid JSON, no outputs, no hardcoded keys, pyflakes on code cells.
 
-    python nb_lint.py                     # all unsloth/*.ipynb
+    python nb_lint.py                     # all tracked *.ipynb
     python nb_lint.py path/a.ipynb ...
 
 Magic lines (%pip, !pip) become `pass`. Pyflakes runs through `uvx`. IPython builtins
@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 
-paths = sys.argv[1:] or sorted(glob.glob('unsloth/*.ipynb'))
+paths = sys.argv[1:] or sorted(p for p in glob.glob('**/*.ipynb', recursive=True) if '.venv' not in p and 'checkpoint' not in p)
 IPYTHON_BUILTINS = ('display', 'get_ipython')
 SECRET_RE = re.compile(r"(hf_[A-Za-z0-9]{30,}|PK[A-Z0-9]{16,}|(?:KEY|TOKEN|SECRET)\w*\s*=\s*['\"][A-Za-z0-9/+]{20,}['\"])")
 errors = 0
