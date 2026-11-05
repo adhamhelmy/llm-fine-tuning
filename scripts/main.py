@@ -59,7 +59,7 @@ CONFIGS = [
 ]
 
 SPLIT     = 'dev'      # 'dev' while experimenting; 'test' only for final numbers
-SYMBOLS   = 'dow30'    # 'dow30', 'mag7', 'training', or 'AAPL,MSFT'
+SYMBOLS   = 'eval'     # 'eval' (DOW30 minus bad-data symbols), 'dow30', 'mag7', 'training', or 'AAPL,MSFT'
 N_SAMPLES = 1          # strategies per (config, symbol)
 OUT_DIR   = os.path.join(REPO, 'ladder_results')
 
@@ -71,7 +71,13 @@ REWARD = RewardConfig()
 WORKERS = None         # backtest subprocesses (None: cpu_count - 1, max 8; 0: in-process)
 
 TEMPERATURE    = 1.0
-MAX_NEW_TOKENS = 1536
+MAX_NEW_TOKENS = 1536  # evaluation generation budget
+
+# GRPO lengths (tokens). Measured prompts (Qwen tokenizer): baseline ~320, + API reference ~1.4k,
+# full context stack ~2k. train() refuses prompts longer than TRAIN_MAX_PROMPT (TRL would cut
+# them from the left). Completions get TRAIN_MAX_SEQ - TRAIN_MAX_PROMPT (~2k tokens).
+TRAIN_MAX_SEQ    = 5120
+TRAIN_MAX_PROMPT = 3072
 OLLAMA_URL     = 'http://localhost:11434'
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -236,7 +242,8 @@ def train_model():
     dataset = build_dataset(TRAINING_SYMBOLS, TRAIN_START, TRAIN_END,
                             prompt_fn=prompt_fn(CONFIGS[0], backtester))
 
-    model = Unsloth(model_name=name, max_seq_length=1024, lora_adapter_path=adapter)
+    model = Unsloth(model_name=name, max_seq_length=TRAIN_MAX_SEQ, max_prompt_length=TRAIN_MAX_PROMPT,
+                    lora_adapter_path=adapter)
     steps = 100
     # Dataset rows carry symbol/start/end columns, so each completion is scored on its own
     # window (a TRL reward call holds generation_batch_size completions from several prompts).

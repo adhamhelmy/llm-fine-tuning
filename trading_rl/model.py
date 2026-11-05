@@ -27,14 +27,20 @@ def plot_training_rewards(log_history):
 class Unsloth:
     """FastVisionModel + LoRA. `FastVisionModel` is Unsloth's unified loader (also for text models)."""
 
-    def __init__(self, model_name, lora_rank=32, max_seq_length=4096, load_in_4bit=True,
-                 fast_inference=False, max_prompt_length=512,
+    def __init__(self, model_name, lora_rank=32, max_seq_length=5120, load_in_4bit=True,
+                 fast_inference=False, max_prompt_length=3072,
                  lora_adapter_path=None, adapter_trainable=True, hf_token=None):
         """
         lora_adapter_path: HF repo / local path of an existing adapter to load (continue
                            training, or evaluate with adapter_trainable=False). If None, a
                            fresh LoRA adapter is created.
+        max_prompt_length: GRPO prompt budget in tokens; completions get the rest of
+                           max_seq_length. train() refuses prompts longer than this (TRL would
+                           silently cut them from the left). Measured with a Qwen tokenizer:
+                           baseline ~320 tokens, + API reference ~1.4k, full context stack ~2k.
         """
+        if max_prompt_length >= max_seq_length:
+            raise ValueError(f"max_prompt_length ({max_prompt_length}) must be < max_seq_length ({max_seq_length})")
         self.model_name = model_name
         self.max_seq_length = max_seq_length
         self.max_prompt_length = max_prompt_length
@@ -79,6 +85,29 @@ class Unsloth:
         new_tokens = output[0][inputs["input_ids"].shape[-1]:]
         return self.tokenizer.decode(new_tokens, skip_special_tokens=True)
 
+    def count_tokens(self, prompt):
+        """Token length of a user prompt after the chat template (what GRPO feeds the model)."""
+        text = self.tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt.strip()}], tokenize=False, add_generation_prompt=True)
+        try:
+            ids = self.tokenizer(images=None, text=text, add_special_tokens=False)["input_ids"]
+        except TypeError:   # plain text tokenizer (no `images` argument)
+            ids = self.tokenizer(text=text, add_special_tokens=False)["input_ids"]
+        return len(ids[0]) if ids and isinstance(ids[0], list) else len(ids)
+
+    def check_prompt_lengths(self, dataset):
+        """Raise if any dataset prompt exceeds max_prompt_length; returns (longest, budget)."""
+        lengths = [self.count_tokens(row["prompt"][-1]["content"]) for row in dataset]
+        longest = max(lengths)
+        if longest > self.max_prompt_length:
+            raise ValueError(
+                f"{sum(n > self.max_prompt_length for n in lengths)}/{len(lengths)} prompts exceed "
+                f"max_prompt_length={self.max_prompt_length} (longest {longest} tokens); TRL would cut "
+                f"them from the left. Raise max_prompt_length (and max_seq_length) in Unsloth(...).")
+        print(f"Prompt lengths OK: longest {longest} / {self.max_prompt_length} tokens; "
+              f"completions get up to {self.max_seq_length - self.max_prompt_length - 1} tokens.")
+        return longest, self.max_prompt_length
+
     def hf_repo_name(self, steps):
         return f"{self.model_name.split('/')[-1].lower()}-v1-{steps}"
 
@@ -93,6 +122,7 @@ class Unsloth:
                       pushes every checkpoint so an interrupted run can be resumed.
         grpo_overrides: any other GRPOConfig field (e.g. learning_rate, num_generations).
         """
+        self.check_prompt_lengths(dataset)
         max_prompt_length = self.max_prompt_length + 1
         push = bool(hub_model_id and hf_token)
 

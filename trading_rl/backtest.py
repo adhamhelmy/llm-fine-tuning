@@ -46,8 +46,8 @@ class BacktestResult(NamedTuple):
 
 
 def resolve_symbols(symbols):
-    """Accept a ticker, a list, a comma-separated string, or a named set ('dow30', 'mag7',
-    'training'). Returns upper-case tickers, de-duplicated, in the given order."""
+    """Accept a ticker, a list, a comma-separated string, or a named set ('eval', 'dow30',
+    'mag7', 'training'). Returns upper-case tickers, de-duplicated, in the given order."""
     if isinstance(symbols, str):
         if symbols in SYMBOL_SETS:
             symbols = SYMBOL_SETS[symbols]
@@ -95,14 +95,22 @@ def call_with_timeout(fn, seconds, *args, **kwargs):
     return out['value']
 
 
-def bar_issues(bars: pd.DataFrame, max_flat_days=20):
-    """Data-quality problems of a bar frame: empty, or a long run of flat zero-volume bars
-    (Alpaca forward-fills inactive tickers). Returns a list of human-readable strings."""
+def bar_issues(bars: pd.DataFrame, max_flat_days=20, start=None, max_late_days=7):
+    """Data-quality problems of a bar frame: empty, starting more than `max_late_days` after
+    `start` (listed later), or a long run of flat zero-volume bars (Alpaca forward-fills
+    inactive tickers). Returns a list of human-readable strings."""
     if bars is None or len(bars) == 0:
         return ['no bars']
+    issues = []
+    if start is not None:
+        first = bars.index[0].date()
+        if (first - date.fromisoformat(start)).days > max_late_days:
+            issues.append(f'first bar {first} (window starts {start})')
     flat = (bars['volume'] == 0) & (bars['close'].diff() == 0)
     longest = int(flat.groupby((~flat).cumsum()).sum().max()) if flat.any() else 0
-    return [f'{longest} consecutive flat zero-volume bars'] if longest >= max_flat_days else []
+    if longest >= max_flat_days:
+        issues.append(f'{longest} consecutive flat zero-volume bars')
+    return issues
 
 
 class Backtester:
@@ -206,7 +214,7 @@ class Backtester:
         print(f"Pre-fetching bar data for {len(symbols)} symbols ({start} → {end})...")
         for i, symbol in enumerate(symbols, 1):
             bars = self.get_bars(symbol, start, end, timeframe)
-            warn = bar_issues(bars)
+            warn = bar_issues(bars, start=start)
             known = SYMBOL_ISSUES.get(symbol)
             if known and known[0] > start:
                 warn.append(f'unreliable before {known[0]}: {known[1]}')

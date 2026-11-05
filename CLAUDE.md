@@ -10,7 +10,7 @@ This repo fine-tunes LLMs with reinforcement learning (GRPO) so they write profi
 
 ```
 trading_rl/                    # Shared package — ALL backtest / prompt / reward logic lives here
-  config.py                    #   symbol universes + SYMBOL_ISSUES, train/dev/test splits, COST_LEVELS
+  config.py                    #   symbol universes (TRAINING_SYMBOLS, EVAL_SYMBOLS) + SYMBOL_ISSUES, splits, COST_LEVELS
   prompt.py                    #   make_prompt(symbol, start, end, compact, sections, plan, anonymize)
   context.py                   #   API reference, pre-window market stats, few-shot examples
   knowledge.py                 #   financial RAG: strategy corpus + BM25 KnowledgeBase
@@ -28,6 +28,7 @@ pyproject.toml                 # pip-installable; [train] = GPU deps, [dev] = py
 scripts/
   main.py                      # try / test / compare / train models (settings at the top of the file)
 tests/test_smoke.py            # runs the smoke test under pytest (CI: .github/workflows/ci.yml)
+report.md                      # review findings: GRPO batching bug + trace, GRPO variety, data issues, open decisions
 docs/paper/                    # revised methodology (ladder)
 ```
 
@@ -116,10 +117,11 @@ Alpaca (historical bars only; paper endpoint `https://paper-api.alpaca.markets`)
 ### Training (GRPO)
 
 - `Unsloth` loads the model with `FastVisionModel` (Unsloth's unified loader, also used for text-only models). It either creates a fresh LoRA adapter (`r=32`, `alpha=64`, q/k/v/o + gate/up/down proj) or loads an existing one via `lora_adapter_path`.
-- `train()` defaults: lr 5e-6, `num_generations=2`, batch 1 × grad-accum 8, `adamw_8bit`. Override any `GRPOConfig` field through `**grpo_overrides`. It can push to the HF Hub (`hub_strategy="checkpoint"` makes interrupted runs resumable), and saves the adapter to `grpo_saved_lora/`.
+- Lengths: `Unsloth(max_seq_length=5120, max_prompt_length=3072)` (`TRAIN_MAX_SEQ` / `TRAIN_MAX_PROMPT` in `scripts/main.py`). Measured prompts are ~320 tokens (baseline), ~1.4k (+ API reference) and ~2k (full context). `train()` runs `check_prompt_lengths(dataset)` and refuses prompts TRL would left-truncate.
+- `train()` defaults: lr 5e-6, `num_generations=2`, batch 1 × grad-accum 8, `adamw_8bit`. G=2 with TRL's group scaling turns every reward gap into ±0.707, so magnitudes are lost; see `report.md` §2. Override any `GRPOConfig` field through `**grpo_overrides`. It can push to the HF Hub (`hub_strategy="checkpoint"` makes interrupted runs resumable), and saves the adapter to `grpo_saved_lora/`.
 - `generate()` decodes only the new tokens. Decoding the prompt too would let the extractor match the class skeleton inside the prompt.
-- Dataset: one prompt per symbol in `TRAINING_SYMBOLS` (38 US equities), with `symbol`/`start`/`end` columns. With the defaults, TRL's `generation_batch_size` = 1 × 8 = 8 completions = 4 prompts × G=2 per reward call.
-- **Known data problems (not yet fixed in training):** COIN has no bars before 2021-04, NIO is a muni fund's ticker before 2018-09, and DOW is flat 2017-09 → 2019-04 (`config.SYMBOL_ISSUES`, `usable_symbols`).
+- Dataset: one prompt per symbol in `TRAINING_SYMBOLS` (35 US equities), with `symbol`/`start`/`end` columns. With the defaults, TRL's `generation_batch_size` = 1 × 8 = 8 completions = 4 prompts × G=2 per reward call.
+- **Bad-data symbols are excluded:** COIN (no bars before 2021-04), NIO (a muni fund's ticker before 2018-09) and DOW (flat 2017-09 → 2019-04, inside the dev feedback window) are listed in `config.SYMBOL_ISSUES` and left out of `TRAINING_SYMBOLS` (35) and `EVAL_SYMBOLS` (29 = DOW30 − DOW; `SYMBOLS='eval'` in `scripts/main.py`). `bar_issues` / `load_bars` flag empty, late-starting or forward-filled bars. Re-check with them before adding symbols.
 - Date ranges: `config` defines train 2016–2019, dev 2020–2021 and test 2022–2024 (no overlap).
 - Models used so far: Ministral 3 (3B/8B/14B), Qwen2.5-Coder (7B/14B/32B), Llama 3.1 8B, DeepSeek-R1-Distill-Qwen-14B.
 

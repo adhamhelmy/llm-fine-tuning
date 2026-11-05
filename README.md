@@ -20,6 +20,7 @@ The model is prompted to write a `class Strategy(bt.Strategy)`. The code is extr
 | `trading_rl/` | Shared package: prompt, context/RAG, code extraction, backtester, rewards, evaluation, ladder ablation, Unsloth wrapper |
 | `scripts/main.py` | Try / test / compare models, GRPO training |
 | `tests/` | Offline smoke test under pytest (synthetic bars) |
+| `report.md` | Review findings and open decisions before the final runs |
 | `docs/paper/` | Revised methodology (LLM-engineering ladder) |
 
 ## Setup

@@ -150,15 +150,18 @@ with ScoringPool(workers=2, timeout=1, grace=1) as pool:
 # 4e. symbols, data checks, disk cache, CSV schema evolution
 check("resolve_symbols dedupe", tr.resolve_symbols(['aapl', 'AAPL ', 'msft']) == ['AAPL', 'MSFT']
       and tr.resolve_symbols('aapl, msft,aapl') == ['AAPL', 'MSFT'])
-check("symbol sets", len(tr.TRAINING_SYMBOLS) == 38 == len(set(tr.TRAINING_SYMBOLS))
-      and len(set(tr.DOW30)) == 30 and 'INTC' not in tr.TRAINING_SYMBOLS)
+check("symbol sets", len(tr.TRAINING_SYMBOLS) == 35 == len(set(tr.TRAINING_SYMBOLS))
+      and len(set(tr.DOW30)) == 30 and 'INTC' not in tr.TRAINING_SYMBOLS
+      and len(tr.EVAL_SYMBOLS) == 29 and tr.resolve_symbols('eval') == tr.EVAL_SYMBOLS
+      and not set(tr.SYMBOL_ISSUES) & set(tr.TRAINING_SYMBOLS + tr.EVAL_SYMBOLS))
 check("usable_symbols", tr.usable_symbols(['AAPL', 'COIN', 'NIO'], '2016-01-01') == ['AAPL']
       and tr.usable_symbols(['COIN', 'NIO'], '2022-01-01') == ['COIN', 'NIO'])
 flat = stubs.fake_frame('X', '2020-01-01', '2020-06-30')
 flat.iloc[10:60, flat.columns.get_loc('close')] = flat['close'].iloc[10]
 flat.iloc[10:60, flat.columns.get_loc('volume')] = 0
 check("bar_issues", tr.bar_issues(flat) and not tr.bar_issues(stubs.fake_frame('X', '2020-01-01', '2020-06-30'))
-      and tr.bar_issues(pd.DataFrame()) == ['no bars'])
+      and tr.bar_issues(pd.DataFrame()) == ['no bars']
+      and tr.bar_issues(stubs.fake_frame('X', '2020-03-01', '2020-06-30'), start='2020-01-01')[0].startswith('first bar'))
 with tempfile.TemporaryDirectory() as d:
     cached = tr.Backtester(verbose=False, cache_dir=d)
     cached.get_bars('ZZZ', START, END)

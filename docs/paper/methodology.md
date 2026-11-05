@@ -28,13 +28,14 @@ lower stages**, not against a weak prompt-only baseline.
 
 ## 3.2 Experimental protocol
 
-**Data.** Daily split- and dividend-adjusted bars from Alpaca's historical data API for a 30-stock
-US large-cap universe (the Dow 30 as of 2020-08 – 2024-02; `config.DOW30`). The GRPO training set
-uses the 38-symbol `TRAINING_SYMBOLS`. Alpaca forward-fills inactive tickers with flat, zero-volume
-bars, so three training symbols are unusable for part of the train split (`config.SYMBOL_ISSUES`):
-COIN (no bars before its 2021 IPO), NIO (a Nuveen municipal-bond fund's ticker until the 2018 IPO)
-and DOW (flat from the 2017 DowDuPont merger to the 2019 spin-off). **[Drop them or start their
-windows at the valid date in the final training run (`config.usable_symbols`).]**
+**Data.** Daily split- and dividend-adjusted bars from Alpaca's historical data API. Evaluation uses
+a 29-stock US large-cap universe: the Dow 30 as of 2020-08 – 2024-02 (`config.DOW30`) without DOW
+(`config.EVAL_SYMBOLS`). The GRPO training set uses the 35-symbol `TRAINING_SYMBOLS`. Alpaca
+forward-fills inactive tickers with flat, zero-volume bars, so symbols whose bars are missing or
+forward-filled inside any window we use are excluded (`config.SYMBOL_ISSUES`): COIN (no bars before
+its 2021 IPO), NIO (a Nuveen municipal-bond fund's ticker until the 2018 IPO) and DOW (flat from the
+2017 DowDuPont merger to the 2019 spin-off, which covers the dev split's feedback window). All other
+symbols have complete, non-stale bars over 2016–2024 (`backtest.bar_issues`).
 
 **Time splits** (`config.py`). The splits do not overlap and are used for different purposes:
 
@@ -55,8 +56,8 @@ windows at the valid date in the final training run (`config.usable_symbols`).]*
    configuration with the ticker and dates removed from the prompt (`anonymize`). A large drop in
    performance would indicate reliance on memorized hindsight rather than on strategy design.
 
-**Sampling.** Temperature 1.0 and at most 1,536 new tokens. Dev uses 3 samples × 30 symbols = 90 per
-configuration; test uses 5 × 30 = 150 per rung. **[adjust to the final budget]**
+**Sampling.** Temperature 1.0 and at most 1,536 new tokens. Dev uses 3 samples × 29 symbols = 87 per
+configuration; test uses 5 × 29 = 145 per rung. **[adjust to the final budget]**
 
 **Outcome taxonomy** (`rewards.score_strategy`). Every sample gets exactly one status:
 `missing_methods` (no class, or no `__init__`/`next`), `invalid_code` (syntax error or a non-stdlib
@@ -238,7 +239,9 @@ variant is implemented (`LadderConfig(analyst=True)`) but is not part of the lad
   apply a Holm correction.]**
 - **Market frictions:** 3 bps per side in the reward; the robustness report re-runs every strategy at
   0, 10 and 25 bps. Long-only strategies are typical.
-- **Universe:** US large caps, 2016–2024, daily bars only.
+- **Universe:** US large caps, 2016–2024, daily bars only. The universe is today's well-known names
+  (e.g. NVDA, TSLA in training), which is a survivorship/hindsight bias; buy-and-hold is reported as
+  the reference for the same names.
 - **Compute:** greedy selection does not explore every combination of stages. Interactions between
   stages are only partly covered, by the "all three" context variant.
 

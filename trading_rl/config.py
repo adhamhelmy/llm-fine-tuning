@@ -12,27 +12,34 @@ DOW30 = [
 
 MAG7 = ['AAPL', 'AMZN', 'GOOGL', 'META', 'MSFT', 'NVDA', 'TSLA']
 
-# 38-symbol GRPO training universe: DOW30 with NVDA instead of INTC, plus 8 extra names.
-# Membership is unchanged from the original experiments; see SYMBOL_ISSUES before training.
-TRAINING_SYMBOLS = [s if s != 'INTC' else 'NVDA' for s in DOW30] + [
-    'AMZN', 'COIN', 'GE', 'GOOGL', 'NFLX', 'NIO', 'TSLA', 'UVV',
-]
-
-SYMBOL_SETS = {
-    'dow30': DOW30,
-    'mag7': MAG7,
-    'training': TRAINING_SYMBOLS,
-}
-
 # Known data problems in Alpaca's daily bars (verified 2016-2024). Alpaca forward-fills
 # inactive tickers with flat, zero-volume bars, so these backtests are silently wrong before
-# `valid_from`. Backtester.load_bars() warns about them; filter with usable_symbols().
+# `valid_from`. Backtester.load_bars() warns about them.
 SYMBOL_ISSUES = {
     'COIN': ('2021-04-14', 'IPO 2021-04-14: no bars at all before, every backtest raises'),
     'DOW':  ('2019-04-02', 'Dow Chemical until the 2017 DowDuPont merger, then flat at $44.18 '
                            'with zero volume until the Dow Inc. spin-off (2019-04-02)'),
     'NIO':  ('2018-09-12', 'ticker of a Nuveen muni fund until the NIO Inc. IPO (2018-09-12): '
                            'flat at $14.67 with ~zero volume for 2016-2018'),
+}
+
+# GRPO training universe: DOW30 with NVDA instead of INTC, plus extra large caps, minus every
+# symbol in SYMBOL_ISSUES (their 2016-2019 bars are missing or forward-filled). 35 symbols.
+# (The first experiments used 38: these 35 + COIN, DOW, NIO.)
+TRAINING_SYMBOLS = [s for s in [x if x != 'INTC' else 'NVDA' for x in DOW30] +
+                    ['AMZN', 'COIN', 'GE', 'GOOGL', 'NFLX', 'NIO', 'TSLA', 'UVV']
+                    if s not in SYMBOL_ISSUES]
+
+# Dev/test evaluation universe: DOW30 minus SYMBOL_ISSUES (29 symbols). DOW itself is fine from
+# 2020, but the dev split's feedback window (2018-2019, used by repair/refine and the market
+# summary) is flat for it, so it is dropped everywhere to keep one universe for dev and test.
+EVAL_SYMBOLS = [s for s in DOW30 if s not in SYMBOL_ISSUES]
+
+SYMBOL_SETS = {
+    'eval': EVAL_SYMBOLS,
+    'dow30': DOW30,            # the index as it was (includes DOW: check SYMBOL_ISSUES)
+    'mag7': MAG7,
+    'training': TRAINING_SYMBOLS,
 }
 
 

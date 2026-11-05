@@ -10,7 +10,7 @@ from .backtest import (Backtester, BacktestResult, bar_issues, call_with_timeout
 from .baselines import BASELINES, baseline_table
 from .codegen import (describe_exception, extract_function, extract_strategy, function_works,
                       has_required_functions, strip_thinking, validate_code)
-from .config import (COST_LEVELS, DEFAULT_COSTS, DEV_END, DEV_START, DOW30, FEEDBACK_YEARS, MAG7,
+from .config import (COST_LEVELS, DEFAULT_COSTS, DEV_END, DEV_START, DOW30, EVAL_SYMBOLS, FEEDBACK_YEARS, MAG7,
                      SYMBOL_ISSUES, SYMBOL_SETS, TEST_END, TEST_START, TRAIN_END, TRAIN_START,
                      TRAINING_SYMBOLS, usable_symbols)
 from .evaluate import evaluate_sample, evaluate_symbol, summarize
@@ -30,7 +30,7 @@ __all__ = [
     'BASELINES', 'baseline_table',
     'describe_exception', 'extract_function', 'extract_strategy', 'function_works',
     'has_required_functions', 'strip_thinking', 'validate_code',
-    'COST_LEVELS', 'DEFAULT_COSTS', 'DEV_END', 'DEV_START', 'DOW30', 'FEEDBACK_YEARS', 'MAG7',
+    'COST_LEVELS', 'DEFAULT_COSTS', 'DEV_END', 'DEV_START', 'DOW30', 'EVAL_SYMBOLS', 'FEEDBACK_YEARS', 'MAG7',
     'SYMBOL_ISSUES', 'SYMBOL_SETS', 'TEST_END', 'TEST_START', 'TRAIN_END', 'TRAIN_START',
     'TRAINING_SYMBOLS', 'usable_symbols',
     'evaluate_sample', 'evaluate_symbol', 'summarize',
