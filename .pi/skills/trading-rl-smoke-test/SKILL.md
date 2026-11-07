@@ -32,7 +32,7 @@ For the ladder it checks:
 - the few-shot examples run;
 - repair, refine and the analyst → coder graph, using a scripted fake LLM;
 - **no test leakage**: a spy on `Backtester.run` asserts that feedback uses only the pre-window and that the test window is backtested once;
-- anonymization, `LadderConfig()` == the original prompt, RAG, resumable `run_ablation`, `report` / `paired_delta` / `select_best`, and `dump_prompts`.
+- anonymization, `LadderConfig()` == the original prompt, RAG, resumable `run_ablation`, `report` / `paired_delta`, and `dump_prompts`.
 
 It exits 1 if any check fails.
 

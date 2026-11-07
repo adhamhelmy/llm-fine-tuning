@@ -87,7 +87,7 @@ highest profitable rate (ties are broken by mean reward, then fewer LLM calls). 
 forward selection means each stage is only run after the stages below it have been optimized. The
 selected configuration after each stage (a *rung*) is then evaluated once on test.
 
-**Table 1 – Variants per stage** (`ladder.STAGES`)
+**Table 1 – Variants per stage** (results in `configs_tested.md`)
 
 | Stage | Variants (added to the best config so far) |
 |---|---|

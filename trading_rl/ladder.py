@@ -1,14 +1,11 @@
 """The LLM-engineering ladder: prompt -> context -> harness -> loop -> graph, as ablations.
 
-Every generation setting is a `LadderConfig`. Stages are explored greedily: evaluate the
-variants of one stage on the DEV window, keep the best, and build the next stage on top of it:
+Every generation setting is a `LadderConfig`; evaluate a list of them with
 
-    best = LadderConfig()
-    for stage in ('prompt', 'context', 'harness', 'loop', 'graph'):
-        configs = stage_configs(stage, best)
-        df = run_ablation(generate, bt, configs, symbols, DEV_START, DEV_END, n_samples, 'dev.csv')
-        best = select_best(report(df, baselines), configs)
-    # then: final TEST evaluation of the chosen rungs; GRPO trains with best's prompt+context
+    df = run_ablation(generate, bt, configs, symbols, start, end, n_samples, 'eval.csv')
+    print(format_report(report(df, baselines)))
+
+The configs tried before the final one was fixed are recorded in docs/paper/configs_tested.md.
 
 Harness and loop feedback (runtime errors, in-sample metrics) is computed ONLY on the
 FEEDBACK_YEARS before the evaluated window, so nothing about the evaluated window leaks.
@@ -77,25 +74,6 @@ class LadderConfig:
     def uses_feedback(self):
         return self.repair_rounds > 0 or self.refine_rounds > 0
 
-
-# Variants tried at each stage, applied on top of the best config of the previous stage.
-STAGES = {
-    'prompt':  [{}, {'examples': 2}],
-    'context': [{}, {'api_reference': True}, {'market_summary': True}, {'rag_k': 3},
-                {'api_reference': True, 'market_summary': True, 'rag_k': 3}],
-    'harness': [{}, {'repair_rounds': 3}],
-    'loop':    [{}, {'refine_rounds': 2}],
-    'probe':   [{}, {'anonymize': True}],   # diagnostic, not a ladder stage
-}
-
-
-def stage_configs(stage, base=LadderConfig()):
-    out = []
-    for variant in STAGES[stage]:
-        cfg = base.replace(**variant)
-        if cfg not in out:
-            out.append(cfg)
-    return out
 
 
 def feedback_window(start, years=FEEDBACK_YEARS):
@@ -477,15 +455,6 @@ def paired_delta(df, a, b, metric='profitable', baselines=None, n_boot=5000, see
     lo, hi = np.percentile(boots, [2.5, 97.5])
     return {'a': a, 'b': b, 'metric': metric, 'n_symbols': len(d),
             'delta': d.mean(), 'lo': lo, 'hi': hi, 'p': p}
-
-
-def select_best(rep, configs, metric='profitable', by='config'):
-    """Best config among `configs` on `metric` (ties: higher mean reward, then fewer LLM calls)."""
-    names = [c.name for c in configs]
-    r = rep[rep[by].isin(names)].copy()
-    r['_calls'] = -r['llm_calls'] if 'llm_calls' in r else 0
-    best = r.sort_values([metric, 'mean_reward', '_calls'], ascending=False).iloc[0][by]
-    return configs[names.index(best)]
 
 
 def dump_prompts(outdir, configs, backtester=None, symbol='AAPL', start=None, end=None, kb=None):

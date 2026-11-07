@@ -9,7 +9,7 @@ is killed and replaced. Workers also run several backtests at once (GRPO scores 
 generation batch per reward call), and a crash/segfault/memory blow-up in generated code
 only takes down the worker.
 
-Workers are started with `python -m trading_rl.scoring` (not multiprocessing), so this works
+Workers are started with `python -c "...scoring._worker_main(...)"` (not multiprocessing), so this works
 from scripts without a __main__ guard and from notebooks. Bars are sent from the parent's
 cache once per worker, so workers never call Alpaca. This is isolation, not a security
 sandbox: generated code still runs with the user's permissions.
@@ -25,6 +25,7 @@ import time
 import trading_rl
 
 _GRACE = 5           # extra seconds before the parent kills a worker whose SIGALRM didn't fire
+_WORKER_CMD = 'import sys; from trading_rl.scoring import _worker_main; _worker_main(int(sys.argv[1]))'
 
 
 def default_workers():
@@ -37,7 +38,7 @@ class _Worker:
         env = dict(os.environ, PYTHONPATH=os.pathsep.join(
             [pkg_root] + [p for p in os.environ.get('PYTHONPATH', '').split(os.pathsep) if p]))
         self.proc = subprocess.Popen(
-            [sys.executable, '-m', 'trading_rl.scoring', str(memory_mb or 0)],
+            [sys.executable, '-c', _WORKER_CMD, str(memory_mb or 0)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
         self.known = set()      # bar cache keys already sent to this worker
         self.task = None        # (index, deadline) of the running task

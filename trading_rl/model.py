@@ -29,8 +29,12 @@ class Unsloth:
 
     def __init__(self, model_name, lora_rank=32, max_seq_length=5120, load_in_4bit=True,
                  fast_inference=False, max_prompt_length=3072,
-                 lora_adapter_path=None, adapter_trainable=True, hf_token=None):
+                 lora_adapter_path=None, adapter_trainable=True, hf_token=None,
+                 gpu_memory_utilization=0.6):
         """
+        fast_inference: generate GRPO completions with vLLM (needs `pip install vllm`), usually
+                        several times faster than HF generate. gpu_memory_utilization is the share
+                        of GPU memory vLLM reserves; lower it if training runs out of memory.
         lora_adapter_path: HF repo / local path of an existing adapter to load (continue
                            training, or evaluate with adapter_trainable=False). If None, a
                            fresh LoRA adapter is created.
@@ -50,6 +54,9 @@ class Unsloth:
             max_seq_length=max_seq_length,
             load_in_4bit=load_in_4bit,
             fast_inference=fast_inference,
+            # vLLM needs the LoRA rank up front and a memory budget
+            **(dict(max_lora_rank=lora_rank, gpu_memory_utilization=gpu_memory_utilization)
+               if fast_inference else {}),
         )
 
         if lora_adapter_path:

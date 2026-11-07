@@ -20,7 +20,7 @@ trading_rl/                    # Shared package — ALL backtest / prompt / rewa
   scoring.py                   #   ScoringPool: backtests in killable worker subprocesses (hard timeout, parallel)
   evaluate.py                  #   evaluate_sample / evaluate_symbol / summarize (model-agnostic)
   baselines.py                 #   buy-and-hold / SMA 50-200 through the same backtester
-  ladder.py                    #   LLM-engineering ladder: LadderConfig, stages, pipeline, stats
+  ladder.py                    #   LLM-engineering ladder: LadderConfig, pipeline, stats
   robustness.py                #   post-hoc: cost levels, vs buy-and-hold, Wilcoxon/McNemar, by-year, duplicates
   dataset.py                   #   build_dataset() for GRPO (prompt + symbol/start/end columns)
   model.py                     #   Unsloth wrapper (GPU only; not imported by trading_rl/__init__)
@@ -83,7 +83,7 @@ Alpaca (historical bars only; paper endpoint `https://paper-api.alpaca.markets`)
 ### LLM-engineering ladder (the paper's methodology; see docs/paper/methodology.md)
 
 - `LadderConfig` = one generation setting. Its fields are grouped by stage: prompt (`compact`, `examples`, `plan`, `anonymize`), context (`api_reference`, `market_summary`, `rag_k`), harness (`repair_rounds`), loop (`refine_rounds`) and graph (`analyst`). `cfg.name` lists the non-default fields and is the key stored in result CSVs.
-- `STAGES` / `stage_configs(stage, best)`: greedy stage-wise selection. Stages are selected on **DEV**, and **TEST** is used only for the final rungs.
+- The generation config is fixed (`CONFIGS` in `scripts/main.py`). The configs tried before it, and their results, are recorded in `docs/paper/configs_tested.md`; the stage-selection code (`STAGES`, `stage_configs`, `select_best`) was removed. Choose configs on **DEV**; **TEST** is for final numbers only.
 - **Leakage rules, which must hold for any change:**
   - repair/refine feedback and market stats use only `feedback_window(start)`, i.e. the 2 years before the evaluated window;
   - the evaluated window is backtested once per sample;
@@ -116,7 +116,7 @@ Alpaca (historical bars only; paper endpoint `https://paper-api.alpaca.markets`)
 
 ### Training (GRPO)
 
-- `Unsloth` loads the model with `FastVisionModel` (Unsloth's unified loader, also used for text-only models). It either creates a fresh LoRA adapter (`r=32`, `alpha=64`, q/k/v/o + gate/up/down proj) or loads an existing one via `lora_adapter_path`.
+- `Unsloth` loads the model with `FastVisionModel` (Unsloth's unified loader, also used for text-only models). With `fast_inference=True` (`FAST_INFERENCE` in `scripts/main.py`, the default there) GRPO generation runs on vLLM, which must be installed separately (`pip install vllm`); `gpu_memory_utilization` (`TRAIN_GPU_MEMORY`) sets its memory share. It either creates a fresh LoRA adapter (`r=32`, `alpha=64`, q/k/v/o + gate/up/down proj) or loads an existing one via `lora_adapter_path`.
 - Lengths: `Unsloth(max_seq_length=5120, max_prompt_length=3072)` (`TRAIN_MAX_SEQ` / `TRAIN_MAX_PROMPT` in `scripts/main.py`). Measured prompts are ~320 tokens (baseline), ~1.4k (+ API reference) and ~2k (full context). `train()` runs `check_prompt_lengths(dataset)` and refuses prompts TRL would left-truncate.
 - `train()` defaults: lr 5e-6, `num_generations=2`, batch 1 × grad-accum 8, `adamw_8bit`. G=2 with TRL's group scaling turns every reward gap into ±0.707, so magnitudes are lost; see "GRPO group size" in `report.md`. Override any `GRPOConfig` field through `**grpo_overrides`. It can push to the HF Hub (`hub_strategy="checkpoint"` makes interrupted runs resumable), and saves the adapter to `grpo_saved_lora/`.
 - `generate()` decodes only the new tokens. Decoding the prompt too would let the extractor match the class skeleton inside the prompt.

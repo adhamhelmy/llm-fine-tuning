@@ -275,9 +275,6 @@ kb = tr.KnowledgeBase.default()
 check("RAG retrieval", kb.retrieve('mean-reverting range-bound', 2)[0].title.startswith(('RSI', 'Bollinger', 'Stochastic')),
       kb.retrieve('mean-reverting range-bound', 1)[0].title)
 
-check("stage configs", [c.name for c in L.stage_configs('harness', L.LadderConfig(examples=2))]
-      == ['examples=2', 'examples=2,repair_rounds=3'])
-
 with tempfile.TemporaryDirectory() as d:
     out = os.path.join(d, 'abl.csv')
     cfgs = [L.LadderConfig(), L.LadderConfig(repair_rounds=1)]
@@ -292,7 +289,6 @@ with tempfile.TemporaryDirectory() as d:
     print(L.format_report(rep).to_string())
     delta = L.paired_delta(df, 'baseline', 'repair_rounds=1')
     check("paired delta", delta['delta'] == 1.0 and delta['n_symbols'] == 2, str(delta))
-    check("select best", L.select_best(rep, cfgs).name == 'repair_rounds=1')
     L.dump_prompts(os.path.join(d, 'prompts'), [full, full.replace(analyst=True)], bt)
     check("dump prompts", len(os.listdir(os.path.join(d, 'prompts'))) == 3)
 tr.Backtester.run = _orig_run
