@@ -100,6 +100,8 @@ class Unsloth:
             ids = self.tokenizer(images=None, text=text, add_special_tokens=False)["input_ids"]
         except TypeError:   # plain text tokenizer (no `images` argument)
             ids = self.tokenizer(text=text, add_special_tokens=False)["input_ids"]
+        if hasattr(ids, "tolist"):   # vision processors return a tensor/array, shape [1, n]
+            ids = ids.tolist()
         return len(ids[0]) if ids and isinstance(ids[0], list) else len(ids)
 
     def check_prompt_lengths(self, dataset):
