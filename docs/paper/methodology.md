@@ -256,9 +256,14 @@ variant is implemented (`LadderConfig(analyst=True)`) but is not part of the lad
   apply a Holm correction.]**
 - **Market frictions:** 3 bps per side in the reward; the robustness report re-runs every strategy at
   0, 10 and 25 bps. Long-only strategies are typical.
-- **Universe:** US large caps, 2016–2024, daily bars only. The universe is today's well-known names
-  (e.g. NVDA, TSLA in training), which is a survivorship/hindsight bias; buy-and-hold is reported as
-  the reference for the same names.
+- **Universe:** US large/mid caps, 2016–2025, daily bars only. Test membership is fixed at January
+  2022, but symbols that delisted during 2022–25 are dropped (residual survivorship bias). The
+  training list is chosen with hindsight; this does not leak test returns, because it is disjoint
+  from the test stocks and ends in 2021. Buy-and-hold on the same names is the reference.
+- **Benchmark of alpha:** buy-and-hold of the traded stock with a zero risk-free rate, not the
+  market index. It measures timing and selection skill on that stock, not CAPM alpha versus the
+  market. **[optionally also report alpha vs SPY]**
+- **One training seed.**
 - **Compute:** greedy selection does not explore every combination of stages. Interactions between
   stages are only partly covered, by the "all three" context variant.
 
