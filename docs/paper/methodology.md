@@ -70,6 +70,9 @@ searched strategies (deflated Sharpe ratio, PBO) applies.
 3. *Memorization probe.* LLMs may remember price histories from pre-training. We re-run the final
    configuration with the ticker and dates removed from the prompt (`anonymize`). A large drop in
    performance would indicate reliance on memorized hindsight rather than on strategy design.
+   In the final base-vs-GRPO evaluation, every (model, stock, sample) is run both with the named
+   prompt and anonymized. The anonymous prompt is identical for every stock, so it isolates what
+   the ticker and dates add. We report the paired anonymous − named difference in alpha by stock.
 
 **Sampling.** Temperature 1.0, with the same completion budget as GRPO training (2,047 new
 tokens). Base vs GRPO: 8 samples per (model, stock) on DEV and on TEST.
