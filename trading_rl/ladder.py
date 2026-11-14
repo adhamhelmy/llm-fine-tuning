@@ -354,6 +354,43 @@ def run_ablation(generate, backtester: Backtester, configs, symbols, start, end,
               (df['config'].isin([c.name for c in configs]))]
 
 
+def run_ablation_batched(generate_batch, backtester: Backtester, configs, symbols, start, end,
+                         n_samples, out_csv, model='', kb=None, fallback=None, **kw):
+    """run_ablation, but the first-round prompts of every pending (config, symbol, sample) are
+    generated in one generate_batch(prompts) -> [str] call (e.g. Unsloth.generate_batch on
+    vLLM). Later prompts (repair/refine rounds) go to fallback(prompt) -> str, one at a time;
+    without a fallback, configs with repair/refine rounds are refused. Same CSV and resume
+    logic as run_ablation."""
+    reward = kw.get('reward') or DEFAULT_REWARD
+    symbols = resolve_symbols(symbols)
+    if fallback is None and any(c.repair_rounds or c.refine_rounds or c.analyst for c in configs):
+        raise ValueError("configs with repair/refine/analyst need fallback=generate(prompt)")
+    done = set()
+    if os.path.exists(out_csv):
+        prev = read_results(out_csv)
+        done = set(zip(prev['model'], prev['config'], prev['symbol'], prev['start'], prev['sample'],
+                       prev['reward']))
+    ctx = _Context(backtester, kb, reward)
+    prompts = [build_prompt(cfg, sym, start, end, _ctx=ctx)
+               for cfg in configs for sym in symbols for sample in range(1, n_samples + 1)
+               if (model, cfg.name, sym, start, sample, reward.name) not in done]
+    queue = {}
+    if prompts:
+        print(f"Generating {len(prompts)} completions in one batch...")
+        for p, out in zip(prompts, generate_batch(prompts)):
+            queue.setdefault(p, []).append(out)
+
+    def generate(prompt):
+        if queue.get(prompt):
+            return queue[prompt].pop(0)
+        if fallback is None:
+            raise RuntimeError("prompt not in the pre-generated batch and no fallback given")
+        return fallback(prompt)
+
+    return run_ablation(generate, backtester, configs, symbols, start, end, n_samples, out_csv,
+                        model=model, kb=kb, **kw)
+
+
 # ── statistics ─────────────────────────────────────────────────────────────────
 
 def wilson(k, n, z=1.96):
@@ -407,6 +444,11 @@ def report(df, baselines=None, by='config'):
         row['annual_traded'], row['annual_traded_lo'], row['annual_traded_hi'] = bootstrap_mean(t['avg_annual_return_pct'])
         if 'excess_annual' in t:
             row['excess_traded'], row['excess_traded_lo'], row['excess_traded_hi'] = bootstrap_mean(t['excess_annual'])
+        if 'alpha_pct' in t and t['alpha_pct'].notna().any():
+            # Jensen's alpha vs buy-and-hold of the same symbol (%/yr); alpha_sig = t > 1.96
+            row['alpha_traded'], row['alpha_traded_lo'], row['alpha_traded_hi'] = bootstrap_mean(t['alpha_pct'])
+            row['median_beta_traded'] = t['beta'].median()
+            row['alpha_sig'], row['alpha_sig_lo'], row['alpha_sig_hi'] = wilson(int((g['alpha_t'] > 1.96).sum()), len(g))
         row['median_sharpe_traded'] = t['sharpe_ratio'].median()
         row['median_drawdown_traded'] = t['max_drawdown_pct'].median()
         if 'llm_calls' in g:
@@ -418,16 +460,17 @@ def report(df, baselines=None, by='config'):
 def format_report(rep, by='config'):
     """Human-readable table: 'value [lo, hi]' strings, rates in %."""
     out = pd.DataFrame({by: rep[by], 'n': rep['n']})
-    for col in ('valid', 'traded', 'profitable', 'beat_bh'):
+    for col in ('valid', 'traded', 'profitable', 'beat_bh', 'alpha_sig'):
         if col in rep:
             out[f'{col} %'] = [f"{v*100:.1f} [{lo*100:.1f}, {hi*100:.1f}]"
                                for v, lo, hi in zip(rep[col], rep[f'{col}_lo'], rep[f'{col}_hi'])]
     for col, label in (('mean_reward', 'reward'), ('annual_traded', 'annual % (traded)'),
-                       ('excess_traded', 'excess vs B&H % (traded)')):
+                       ('excess_traded', 'excess vs B&H % (traded)'),
+                       ('alpha_traded', 'alpha %/yr (traded)')):
         if col in rep:
             out[label] = [f"{v:.2f} [{lo:.2f}, {hi:.2f}]" if not math.isnan(v) else '-'
                           for v, lo, hi in zip(rep[col], rep[f'{col}_lo'], rep[f'{col}_hi'])]
-    for col in ('median_sharpe_traded', 'llm_calls'):
+    for col in ('median_beta_traded', 'median_sharpe_traded', 'llm_calls'):
         if col in rep:
             out[col] = rep[col].round(2)
     return out

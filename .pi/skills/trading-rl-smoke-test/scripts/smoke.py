@@ -129,6 +129,28 @@ check("loss rewards", tr.RewardConfig().score(loser) == ('loss', 0)
       and tr.RewardConfig('cagr', loss=None, clip=(-0.99, None)).score(loser) == ('loss', -0.99)
       and tr.RewardConfig().score(loser._replace(n_orders=0)) == ('no_trades', -1))
 
+# 4c'. Jensen's alpha: buy-and-hold has beta ~1 / alpha ~0; a half-invested copy has beta ~0.5;
+# the alpha reward ranks negative alphas below positive ones and every trader above a non-trader
+from trading_rl.backtest import jensen_alpha
+import numpy as np
+px = 100 * np.cumprod(1 + np.random.default_rng(0).normal(0.0005, 0.01, 500))
+a0, b0, _ = jensen_alpha(px * 3, px)
+half = 0.5 * px / px[0] + 0.5            # 50% stock, 50% cash
+a1, b1, _ = jensen_alpha(half, px)
+noise = np.random.default_rng(1).normal(0, 0.002, 499)
+boosted = np.cumprod(np.r_[1, 1 + (px[1:] / px[:-1] - 1) + 0.0004 + noise])   # +4 bps/bar on top
+a2, b2, t2 = jensen_alpha(boosted, px)
+check("jensen alpha", abs(a0) < 1e-6 and abs(b0 - 1) < 1e-9 and abs(a2 - 0.0004 * 252 * 100) < 5
+      and abs(b2 - 1) < 0.01 and t2 > 2 and 0.4 < b1 < 0.6 and jensen_alpha(px[:5], px[:5]) == (0.0, 0.0, 0.0),
+      f"a0={a0:.3g} b0={b0:.3g} b1={b1:.3g} a2={a2:.3g} t2={t2:.3g}")
+check("bh beta ~1", abs(bh.beta - 1) < 0.05 and abs(bh.alpha_pct) < 1, f"beta={bh.beta:.3f} alpha={bh.alpha_pct:.3f}")
+ar = tr.RewardConfig.alpha()
+good_a, bad_a, worse_a = (loser._replace(alpha_pct=v) for v in (12.0, -3.0, -40.0))
+check("alpha reward", ar.score(good_a) == ('loss', 12.0) and -0.99 < ar.score(worse_a)[1] < ar.score(bad_a)[1] < 0
+      and ar.score(loser._replace(alpha_pct=500.0))[1] == 50.0 and ar.score(good_a._replace(n_orders=0))[1] == -1
+      and tr.score_strategy(code, bt, SYM, START, END, reward=tr.RewardConfig('alpha', floor=None, loss=None)).reward == r.alpha_pct,
+      ar.name)
+
 # 4d. subprocess pool: hard timeout (C-level loop SIGALRM can't break), crash, print, parity
 from trading_rl.scoring import ScoringPool
 C_LOOP = body.replace("    def next(self):\n        pass", "    def next(self):\n        sum(range(10 ** 12))")

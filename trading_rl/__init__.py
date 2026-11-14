@@ -16,7 +16,8 @@ from .config import (COST_LEVELS, DEFAULT_COSTS, DEV_END, DEV_START, DOW30, EVAL
 from .evaluate import evaluate_sample, evaluate_symbol, summarize
 from .knowledge import KnowledgeBase
 from .ladder import (LadderConfig, append_csv, build_prompt, dump_prompts, format_report,
-                     generate_strategy, paired_delta, prompt_fn, read_results, report, run_ablation)
+                     generate_strategy, paired_delta, prompt_fn, read_results, report, run_ablation,
+                     run_ablation_batched)
 from .prompt import extract_trading_parameters, make_prompt
 from .robustness import (REGIMES, cost_report, duplicates, format_cost_report, full_report, mcnemar,
                          paired_wilcoxon, per_asset, rebacktest, signed_rank_test, year_report)
@@ -35,7 +36,7 @@ __all__ = [
     'evaluate_sample', 'evaluate_symbol', 'summarize',
     'KnowledgeBase',
     'LadderConfig', 'append_csv', 'build_prompt', 'dump_prompts', 'format_report',
-    'generate_strategy', 'paired_delta', 'prompt_fn', 'read_results', 'report', 'run_ablation',
+    'generate_strategy', 'paired_delta', 'prompt_fn', 'read_results', 'report', 'run_ablation', 'run_ablation_batched',
     'extract_trading_parameters', 'make_prompt',
     'REGIMES', 'cost_report', 'duplicates', 'format_cost_report', 'full_report', 'mcnemar',
     'paired_wilcoxon', 'per_asset', 'rebacktest', 'signed_rank_test', 'year_report',

@@ -33,6 +33,11 @@ class BacktestResult(NamedTuple):
     max_drawdown_pct: float
     cagr_pct: float = 0.0             # compound annual growth rate over the bar span
     n_orders: int = 0                 # completed (filled) orders
+    # Jensen's alpha: OLS of per-bar strategy returns on the traded asset's per-bar returns
+    # (buy-and-hold of the same data, no costs; risk-free rate 0). See jensen_alpha().
+    alpha_pct: float = 0.0            # annualised intercept, % per year
+    beta: float = 0.0                 # market exposure vs buy-and-hold
+    alpha_t: float = 0.0              # t-statistic of the intercept
 
     @property
     def traded(self) -> bool:
@@ -42,7 +47,37 @@ class BacktestResult(NamedTuple):
         sharpe = f"{self.sharpe_ratio:.2f}" if self.sharpe_ratio is not None else "N/A"
         return (f"return={self.return_pct:.2f}% cagr={self.cagr_pct:.2f}% sharpe={sharpe} "
                 f"annual={self.avg_annual_return_pct:.2f}% drawdown={self.max_drawdown_pct:.2f}% "
-                f"orders={self.n_orders}")
+                f"alpha={self.alpha_pct:.2f}% beta={self.beta:.2f} orders={self.n_orders}")
+
+
+def jensen_alpha(strategy_values, benchmark_prices, periods_per_year=252.0, min_periods=20):
+    """Jensen's alpha of an equity curve against a benchmark price series (same bars).
+
+    Regresses per-bar strategy returns on per-bar benchmark returns (risk-free rate 0):
+        r_p = a + b * r_m + e
+    Returns (alpha_pct, beta, alpha_t): `a` annualised (x periods_per_year, in %), `b`, and the
+    t-statistic of `a`. Fewer than `min_periods` returns gives (0.0, 0.0, 0.0).
+    """
+    import numpy as np
+    v = np.asarray(strategy_values, dtype=float)
+    m = np.asarray(benchmark_prices, dtype=float)
+    if len(v) != len(m) or len(v) <= min_periods or (v[:-1] <= 0).any() or (m[:-1] <= 0).any():
+        return 0.0, 0.0, 0.0
+    y, x = v[1:] / v[:-1] - 1, m[1:] / m[:-1] - 1
+    ok = np.isfinite(y) & np.isfinite(x)
+    y, x = y[ok], x[ok]
+    n = len(y)
+    if n < min_periods:
+        return 0.0, 0.0, 0.0
+    xm, ym = x.mean(), y.mean()
+    sxx = ((x - xm) ** 2).sum()
+    beta = float(((x - xm) * (y - ym)).sum() / sxx) if sxx > 0 else 0.0
+    a = ym - beta * xm
+    resid = y - a - beta * x
+    s2 = (resid ** 2).sum() / (n - 2)
+    se = np.sqrt(s2 * (1 / n + (xm ** 2 / sxx if sxx > 0 else 0.0)))
+    t = float(a / se) if se > 1e-12 else 0.0
+    return float(a * periods_per_year * 100), beta, t
 
 
 def resolve_symbols(symbols):
@@ -161,6 +196,8 @@ class Backtester:
             path = os.path.join(self.cache_dir, '_'.join(key) + '.pkl') if self.cache_dir else None
             if path and os.path.exists(path):
                 bars = pd.read_pickle(path)
+            elif (sup := self._from_superset(*key)) is not None:
+                bars = sup          # sub-window of bars already cached: same prices, no download
             else:
                 bars = self._fetch_bars(symbol, start, end, key[1])
                 if path:
@@ -169,6 +206,25 @@ class Backtester:
                     os.replace(path + '.tmp', path)
             Backtester._cache[key] = bars
         return Backtester._cache[key]
+
+    def _from_superset(self, symbol, timeframe, start, end):
+        """Bars for [start, end] cut from a cached window that covers it (memory or disk)."""
+        keys = [k for k in Backtester._cache if k[:2] == (symbol, timeframe)]
+        if self.cache_dir and os.path.isdir(self.cache_dir):
+            prefix = f"{symbol}_{timeframe}_"
+            for f in os.listdir(self.cache_dir):
+                parts = f[len(prefix):-4].split('_') if f.startswith(prefix) and f.endswith('.pkl') else []
+                if len(parts) == 2:
+                    keys.append((symbol, timeframe, *parts))
+        for k in sorted(set(keys), key=lambda k: (k[2], k[3])):
+            if k[2] <= start and k[3] >= end and (k[2], k[3]) != (start, end):
+                sup = Backtester._cache.get(k)
+                if sup is None:
+                    sup = pd.read_pickle(os.path.join(self.cache_dir, '_'.join(k) + '.pkl'))
+                days = sup.index.normalize().tz_localize(None) if sup.index.tz is not None else sup.index.normalize()
+                sub = sup[(days >= pd.Timestamp(start)) & (days <= pd.Timestamp(end))]
+                return sub if len(sub) else None
+        return None
 
     def _fetch_bars(self, symbol, start, end, timeframe):
         """Download split/dividend-adjusted bars from Alpaca (intraday in 3-month chunks)."""
@@ -258,6 +314,9 @@ class Backtester:
         final = cerebro.broker.getvalue()
         growth = final / initial
         cagr = (growth ** (1 / act['years']) - 1) * 100 if growth > 0 else -100.0
+        n_bars = len(act['values'])
+        alpha, beta, alpha_t = jensen_alpha(act['values'], act['prices'],
+                                            periods_per_year=max(n_bars - 1, 1) / act['years'])
         return BacktestResult(
             return_pct=(growth - 1) * 100,
             sharpe_ratio=strat.analyzers.sharpe.get_analysis().get('sharperatio'),
@@ -265,6 +324,9 @@ class Backtester:
             max_drawdown_pct=strat.analyzers.drawdown.get_analysis()['max']['drawdown'],
             cagr_pct=cagr,
             n_orders=act['orders'],
+            alpha_pct=alpha,
+            beta=beta,
+            alpha_t=alpha_t,
         )
 
     def run(self, strategy, symbols, start, end, timeframe='day', cash=10_000,
@@ -348,13 +410,14 @@ class Backtester:
 
 
 class _Activity(bt.Analyzer):
-    """Filled orders, traded value, commission, rejected orders and the calendar span in years
-    (turnover and CAGR are annualised by calendar time)."""
+    """Filled orders, traded value, commission, rejected orders, the calendar span in years
+    (turnover and CAGR are annualised by calendar time), and per-bar equity + first data feed
+    close (for Jensen's alpha)."""
 
     def start(self):
         self.traded = self.comm = 0.0
         self.rejected = self.orders = 0
-        self.values, self.first, self.last = [], None, None
+        self.values, self.prices, self.first, self.last = [], [], None, None
 
     def notify_order(self, order):
         if order.status == order.Completed:
@@ -366,6 +429,7 @@ class _Activity(bt.Analyzer):
 
     def next(self):
         self.values.append(self.strategy.broker.getvalue())
+        self.prices.append(self.strategy.datas[0].close[0])
         d = self.strategy.datetime.date(0)
         self.first = self.first or d
         self.last = d
@@ -375,4 +439,4 @@ class _Activity(bt.Analyzer):
         avg = sum(self.values) / len(self.values) if self.values else 0.0
         return {'turnover': (self.traded / avg / years) if avg else 0.0,
                 'commission': self.comm, 'rejected': self.rejected, 'orders': self.orders,
-                'years': years}
+                'years': years, 'values': self.values, 'prices': self.prices}

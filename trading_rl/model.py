@@ -92,6 +92,40 @@ class Unsloth:
         new_tokens = output[0][inputs["input_ids"].shape[-1]:]
         return self.tokenizer.decode(new_tokens, skip_special_tokens=True)
 
+    def generate_batch(self, prompts, temperature=1.0, max_new_tokens=None, adapter=True,
+                       lora_path="grpo_saved_lora"):
+        """Completions for many prompts (new text only), for fast evaluation.
+
+        With fast_inference (vLLM) all prompts go in one batch; adapter=True applies the LoRA
+        saved at lora_path (train() saves there), adapter=False uses the base model. Without
+        vLLM (or if it fails) it falls back to one HF generate per prompt, with the adapter
+        disabled for adapter=False.
+        """
+        max_new_tokens = max_new_tokens or self.max_seq_length - self.max_prompt_length
+        texts = [self.tokenizer.apply_chat_template([{"role": "user", "content": p.strip()}],
+                                                    tokenize=False, add_generation_prompt=True)
+                 for p in prompts]
+        if hasattr(self.model, "fast_generate"):
+            try:
+                from vllm import SamplingParams
+                lora = self.model.load_lora(lora_path) if adapter else None
+                outs = self.model.fast_generate(
+                    texts, sampling_params=SamplingParams(temperature=temperature, max_tokens=max_new_tokens),
+                    lora_request=lora, use_tqdm=True)
+                return [o.outputs[0].text for o in outs]
+            except Exception as e:
+                print(f"vLLM batch generation failed ({type(e).__name__}: {str(e)[:200]}); "
+                      f"falling back to HF generate")
+        import contextlib
+        ctx = (self.model.disable_adapter() if not adapter and hasattr(self.model, "disable_adapter")
+               else contextlib.nullcontext())
+        out = []
+        with ctx:
+            for i, p in enumerate(prompts, 1):
+                out.append(self.generate(p, temperature=temperature, max_new_tokens=max_new_tokens))
+                print(f"  generated {i}/{len(prompts)}", flush=True)
+        return out
+
     def count_tokens(self, prompt):
         """Token length of a user prompt after the chat template (what GRPO feeds the model)."""
         text = self.tokenizer.apply_chat_template(

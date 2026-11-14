@@ -71,8 +71,9 @@ OUT_DIR   = os.path.join(REPO, 'ladder_results')
 # Reward for training AND evaluation (keep them equal). RewardConfig() = avg annual return with
 # 'low' costs (1 bp commission + 2 bps slippage per side); RewardConfig.original() = the
 # frictionless reward of the first runs. Other metrics: 'cagr', 'sharpe', 'calmar',
-# 'excess_cagr', or any fn(result) -> float. See trading_rl/rewards.py.
-REWARD = RewardConfig()
+# 'excess_cagr', 'alpha', or any fn(result) -> float. See trading_rl/rewards.py.
+# RewardConfig.alpha() = Jensen's alpha vs buy-and-hold of the same symbol (the final GRPO run).
+REWARD = RewardConfig.alpha()
 WORKERS = None         # backtest subprocesses (None: cpu_count - 1, max 8; 0: in-process)
 
 TEMPERATURE    = 1.0
@@ -270,19 +271,21 @@ def train_model():
     from trading_rl.model import Unsloth  # must be imported before trl / transformers
     from trading_rl import (TRAIN_END, TRAIN_START, TRAINING_SYMBOLS, Backtester,
                             make_strategy_reward, prompt_fn)
-    from trading_rl.dataset import build_dataset
+    from trading_rl.dataset import build_dataset, train_windows
 
     backend, name, adapter = MODELS[0]
     assert backend == 'unsloth', "training needs an 'unsloth' model"
     backtester = Backtester(verbose=False)
-    backtester.load_bars(TRAINING_SYMBOLS, TRAIN_START, TRAIN_END)
-    dataset = build_dataset(TRAINING_SYMBOLS, TRAIN_START, TRAIN_END,
-                            prompt_fn=prompt_fn(CONFIGS[0], backtester))
+    windows = train_windows(TRAIN_START, TRAIN_END)    # 2016-19 + its halves; full window first
+    for s, e in windows:
+        backtester.load_bars(TRAINING_SYMBOLS, s, e)
+    dataset = build_dataset(TRAINING_SYMBOLS, prompt_fn=prompt_fn(CONFIGS[0], backtester),
+                            windows=windows, shuffle_seed=0)
 
     model = Unsloth(model_name=name, max_seq_length=TRAIN_MAX_SEQ, max_prompt_length=TRAIN_MAX_PROMPT,
                     lora_adapter_path=adapter, fast_inference=FAST_INFERENCE,
                     gpu_memory_utilization=TRAIN_GPU_MEMORY)
-    steps = 100
+    steps = 200
     # Dataset rows carry symbol/start/end columns, so each completion is scored on its own
     # window (a TRL reward call holds generation_batch_size completions from several prompts).
     model.train(
@@ -292,6 +295,10 @@ def train_model():
         dataset=dataset,
         hub_model_id=model.hf_repo_name(steps),
         hf_token=os.environ.get('HF_TOKEN'),
+        hub_strategy='checkpoint', save_steps=25,
+        # 8 completions per prompt (G=2 turns every reward gap into +-0.707); batch scaling
+        # keeps the size of the reward gap
+        num_generations=8, gradient_accumulation_steps=8, scale_rewards='batch',
     )
 
 

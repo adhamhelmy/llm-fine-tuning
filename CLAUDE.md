@@ -72,6 +72,7 @@ Alpaca (historical bars only; paper endpoint `https://paper-api.alpaca.markets`)
    Both GRPO training (`make_strategy_reward`) and every evaluation path use this same function, so statuses and rewards stay consistent.
    - **`RewardConfig`** decides what a traded strategy earns and what the backtest charges: `metric` (`avg_annual`, `cagr`, `return`, `sharpe`, `calmar`, `excess_cagr`, `excess_return`, or any `fn(result)` / `fn(result, benchmark)`), `floor`, `loss` (None = use the metric), `clip`, and `costs` (a `COST_LEVELS` name or `(commission_bps, slippage_bps)`).
    - The default is `RewardConfig()`: `avg_annual` with `'low'` costs (1 + 2 bps per side). `RewardConfig.original()` is the frictionless reward of the first runs.
+   - `RewardConfig.alpha()` (the final runs) rewards Jensen's alpha vs buy-and-hold of the same symbol: `BacktestResult.alpha_pct`/`beta`/`alpha_t` come from an OLS of per-bar strategy returns on the asset's per-bar returns (`backtest.jensen_alpha`, recorded by `_Activity`). Negative alphas are squashed into (-0.99, 0) (`alpha_soft`), capped at 50.
    - `cfg.name` is stored in the `reward` column of result CSVs. `run_ablation` resumes per reward, and rows without that column are read as `original()`.
    - Pass the **same** config to training, `run_ablation`, `evaluate_*` and `baseline_table`.
    - "Traded" means at least one filled order (`BacktestResult.n_orders > 0`).
@@ -120,7 +121,7 @@ Alpaca (historical bars only; paper endpoint `https://paper-api.alpaca.markets`)
 - Lengths: `Unsloth(max_seq_length=5120, max_prompt_length=3072)` (`TRAIN_MAX_SEQ` / `TRAIN_MAX_PROMPT` in `scripts/main.py`). Measured prompts are ~320 tokens (baseline), ~1.4k (+ API reference) and ~2k (full context). `train()` runs `check_prompt_lengths(dataset)` and refuses prompts TRL would left-truncate.
 - `train()` defaults: lr 5e-6, `num_generations=2`, batch 1 × grad-accum 8, `adamw_8bit`. G=2 with TRL's group scaling turns every reward gap into ±0.707, so magnitudes are lost; see "GRPO group size" in `report.md`. Override any `GRPOConfig` field through `**grpo_overrides`. It can push to the HF Hub (`hub_strategy="checkpoint"` makes interrupted runs resumable), and saves the adapter to `grpo_saved_lora/`.
 - `generate()` decodes only the new tokens. Decoding the prompt too would let the extractor match the class skeleton inside the prompt.
-- Dataset: one prompt per symbol in `TRAINING_SYMBOLS` (35 US equities), with `symbol`/`start`/`end` columns. With the defaults, TRL's `generation_batch_size` = 1 × 8 = 8 completions = 4 prompts × G=2 per reward call.
+- Dataset: one prompt per symbol in `TRAINING_SYMBOLS` (35 US equities) per window, with `symbol`/`start`/`end` columns. `build_dataset(windows=train_windows())` uses 2016–19 plus its two halves (105 prompts); `get_bars` cuts sub-windows from a cached superset window, so load the full window first. With the defaults, TRL's `generation_batch_size` = 1 × 8 = 8 completions = 4 prompts × G=2 per reward call.
 - **Bad-data symbols are excluded:** COIN (no bars before 2021-04), NIO (a muni fund's ticker before 2018-09) and DOW (flat 2017-09 → 2019-04, inside the dev feedback window) are listed in `config.SYMBOL_ISSUES` and left out of `TRAINING_SYMBOLS` (35) and `EVAL_SYMBOLS` (29 = DOW30 − DOW; `SYMBOLS='eval'` in `scripts/main.py`). `bar_issues` / `load_bars` flag empty, late-starting or forward-filled bars. Re-check with them before adding symbols.
 - Date ranges: `config` defines train 2016–2019, dev 2020–2021 and test 2022–2024 (no overlap).
 - Models used so far: Ministral 3 (3B/8B/14B), Qwen2.5-Coder (7B/14B/32B), Llama 3.1 8B, DeepSeek-R1-Distill-Qwen-14B.
@@ -132,7 +133,7 @@ Alpaca (historical bars only; paper endpoint `https://paper-api.alpaca.markets`)
 - `evaluate_sample(generate, backtester, symbol, start, end, ...)` accepts any `generate(prompt) -> str` callable (Unsloth, MLX, Ollama) and returns a flat record (status, reward, metrics, code, error).
 - `summarize(df)` prints the status breakdown and metrics.
 - Result CSVs use the columns `status`, `reward` (RewardConfig name) and `strategy_code`. `ladder.append_csv` widens the file when new columns appear, and `read_results` labels old rows.
-- Base vs LoRA: list both in `MODELS` in `scripts/main.py` and run `compare`. Results go to `ladder_results/<model>/eval_<split>.csv`.
+- Base vs LoRA: list both in `MODELS` in `scripts/main.py` and run `compare`, or on Colab use the notebook's eval cell (`run_ablation_batched` + `Unsloth.generate_batch`, which batches first-round prompts through vLLM; `adapter=False` = base). Results go to `ladder_results/<model>/eval_<split>.csv`.
 
 ## Generated artifacts (gitignored)
 

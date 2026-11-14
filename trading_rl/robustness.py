@@ -198,6 +198,12 @@ def cost_report(rb, by=('model', 'config')):
             row[col], row[f'{col}_lo'], row[f'{col}_hi'] = _ci(g[col])
         row['bh_annual'] = g['bh_avg_annual_return_pct'].mean()
         t = g[traded]
+        if 'alpha_pct' in t:
+            # Jensen's alpha vs buy-and-hold (%/yr), over strategies that still traded
+            row['alpha_pct'], row['alpha_pct_lo'], row['alpha_pct_hi'] = _ci(t['alpha_pct'])
+            row['median_beta'] = t['beta'].median()
+            k = int((g['alpha_t'] > 1.96).sum()) if 'alpha_t' in g else 0
+            row['alpha_sig'], row['alpha_sig_lo'], row['alpha_sig_hi'] = wilson(k, n)
         for col in ('sharpe_ratio', 'max_drawdown_pct', 'volatility_pct', 'turnover', 'n_trades'):
             row[f'median_{col}'] = t[col].median() if col in t else math.nan
         row['median_bh_drawdown'] = g['bh_max_drawdown_pct'].median()
@@ -394,6 +400,10 @@ def format_cost_report(rep, by=('model', 'config')):
     out['B&H annual %'] = rep['bh_annual'].round(2)
     out['excess return %'] = [_fmt(*r) for r in rep[['excess_return', 'excess_return_lo',
                                                       'excess_return_hi']].values]
+    if 'alpha_pct' in rep:
+        out['alpha %/yr'] = [_fmt(*r) for r in rep[['alpha_pct', 'alpha_pct_lo', 'alpha_pct_hi']].values]
+        out['alpha t>1.96 %'] = [_fmt(*r, pct=True) for r in rep[['alpha_sig', 'alpha_sig_lo', 'alpha_sig_hi']].values]
+        out['beta'] = rep['median_beta'].round(2)
     out['wilcoxon p'] = rep['wilcoxon_p'].map(lambda p: f"{p:.3g}" if not math.isnan(p) else '-')
     for col, label in (('median_max_drawdown_pct', 'MDD'), ('median_bh_drawdown', 'B&H MDD'),
                        ('median_volatility_pct', 'vol %'), ('median_turnover', 'turnover/yr'),

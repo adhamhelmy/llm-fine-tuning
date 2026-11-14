@@ -54,7 +54,15 @@ METRICS = {
     'calmar': lambda r: r.cagr_pct / max(r.max_drawdown_pct, 1.0),
     'excess_cagr': lambda r, bench: r.cagr_pct - bench().cagr_pct,
     'excess_return': lambda r, bench: r.return_pct - bench().return_pct,
+    'alpha': lambda r: r.alpha_pct,                       # Jensen's alpha vs buy-and-hold, %/yr
+    'alpha_soft': lambda r: _soft_negative(r.alpha_pct),  # same, negatives squashed into (-0.99, 0)
 }
+
+
+def _soft_negative(x, scale=10.0, bound=0.99):
+    """x for x >= 0; maps x < 0 smoothly and monotonically into (-bound, 0), so every trading
+    strategy still beats a non-trader (-1) while worse alphas still rank lower."""
+    return x if x >= 0 else -bound * (1 - math.exp(x / scale))
 
 
 def _call_metric(fn, result, benchmark):
@@ -82,6 +90,7 @@ class RewardConfig:
         RewardConfig('cagr')
         RewardConfig('sharpe', floor=0.1, loss=None, clip=(-0.99, 5))
         RewardConfig('excess_cagr', floor=None, loss=None, clip=(-0.99, None))
+        RewardConfig.alpha()                              # Jensen's alpha vs buy-and-hold
         RewardConfig(lambda r: r.cagr_pct - 0.5 * r.max_drawdown_pct, floor=None, loss=None)
     """
     metric: Union[str, Callable] = 'avg_annual'
@@ -100,6 +109,13 @@ class RewardConfig:
     def original(cls):
         """The reward the first GRPO runs used: avg annual return, floor 1, no costs."""
         return cls(costs='none')
+
+    @classmethod
+    def alpha(cls, cap=50.0, costs=DEFAULT_COSTS):
+        """Jensen's alpha (annualised %, vs buy-and-hold of the same symbol, risk-free 0) for
+        every strategy that traded, profitable or not. Negative alphas are squashed into
+        (-0.99, 0) so trading still beats not trading (-1); `cap` limits lucky outliers."""
+        return cls('alpha_soft', floor=None, loss=None, clip=(None, cap), costs=costs)
 
     @property
     def cost_bps(self):

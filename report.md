@@ -9,20 +9,22 @@
 
 ## Decisions before the final runs
 
-1. **Reward.** Set `REWARD` in `scripts/main.py`, and use the same one for training and
-   evaluation.
-   - Default: `RewardConfig()`, which is average annual return with 1 bp commission + 2 bps
-     slippage per side.
-   - Report CAGR rather than `avg_annual`, which doesn't compound.
-   - To reward beating buy-and-hold instead of plain profit:
-     `RewardConfig('excess_cagr', floor=None, loss=None, clip=(-0.99, None))`.
-2. **GRPO group size.** With `num_generations=2`, TRL's group scaling turns every reward pair into
-   ±0.707: a +60% vs +1% pair trains exactly like 0 vs −1, and equal pairs train nothing.
-   - Use `num_generations=8`.
-   - Consider `scale_rewards="batch"`, so the size of the reward gap counts.
-3. **Training variety.** There are 35 prompts on one window (2016–2019, a bull market). Each prompt
-   is seen about 11 times in 100 steps, and long-biased strategies win almost by default. Consider
-   several random 1–2 year sub-windows per symbol.
+1. **Reward: decided (2026-11-14): Jensen's alpha**, `RewardConfig.alpha()` in `scripts/main.py`
+   and the Colab notebook; use the same one for training and evaluation.
+   - Alpha is the intercept of an OLS of daily strategy returns on daily buy-and-hold returns of
+     the same symbol (risk-free 0), annualised in %/yr (`BacktestResult.alpha_pct`, `beta`, `alpha_t`).
+   - Every trading strategy earns its alpha. Negative alphas are squashed into (-0.99, 0)
+     (`alpha_soft`), so trading still beats not trading (-1), and the reward is capped at 50 %/yr.
+   - Why: under `avg_annual`, staying long in the 2016–19 bull market wins by default. On the
+     existing TEST rows, qwen3.8's AXP strategy made 21.3 %/yr (reward 21.3) with beta 0.80 and
+     alpha −1.0: it was just riding the stock.
+   - Costs stay at `'low'` (1 bp commission + 2 bps slippage per side). Report CAGR rather than
+     `avg_annual`, which doesn't compound.
+2. **GRPO group size: decided.** `num_generations=8`, `scale_rewards="batch"` (TRL 0.22 supports
+   it). With `num_generations=2`, TRL's group scaling turned every reward pair into ±0.707.
+3. **Training variety: decided.** `train_windows()` gives 2016–19 plus 2016–17 and 2018–19, i.e.
+   35 × 3 = 105 prompts. The halves are cut from the cached full window (`Backtester._from_superset`),
+   so they need no extra downloads.
 4. **Market summary in training.** It needs 2 years of bars before the window, and Alpaca has none
    before 2016, so training prompts never include it while dev/test prompts do. Either start the
    train split in 2018 or document the gap.
