@@ -22,14 +22,15 @@
      `avg_annual`, which doesn't compound.
 2. **GRPO group size: decided.** `num_generations=8`, `scale_rewards="batch"` (TRL 0.22 supports
    it). With `num_generations=2`, TRL's group scaling turned every reward pair into ±0.707.
-3. **Training variety: decided.** `train_windows()` gives 2016–19 plus 2016–17 and 2018–19, i.e.
-   35 × 3 = 105 prompts. The halves are cut from the cached full window (`Backtester._from_superset`),
-   so they need no extra downloads.
-4. **Evaluation breadth: decided (2026-11-14).** Test is now 2022–2025. The universe is
-   `EVAL_SYMBOLS` + `UNSEEN_SYMBOLS` (~94 stocks), with 8 samples per stock. Stats are paired by
-   stock. Similar papers informed this: FINSABER (Li et al. 2025) shows LLM trading claims made on a
-   few hand-picked stocks over short windows collapse on 100+ symbols over 20 years.
-   `SP100_2022` was compiled from memory: verify it before publishing.
+3. **Training data: decided (2026-11-14).** Dev (2020–21) is folded into training, since every
+   setting was already fixed. Training uses ~340 large/mid caps (`TRAIN_UNIVERSE`) on 2016–21 and
+   its two halves, ~1,000 prompts. 200 steps use 200 of them, so variety is no longer a bottleneck.
+4. **Evaluation: decided (2026-11-14).** TEST 2022–25 on `TEST_SYMBOLS` (S&P 100 + Dow 30 of Jan
+   2022, 101 tickers). It is disjoint from training, so every test stock is unseen. Each stock gets
+   8 samples per model, plus the anonymized memorization probe. Stats are paired by stock.
+   FINSABER (Li et al. 2025) informed this: LLM trading claims made on a few hand-picked stocks
+   over short windows collapse on 100+ symbols over 20 years. `SP100_2022` was compiled from
+   memory: verify it before publishing.
 5. **Market summary in training.** It needs 2 years of bars before the window, and Alpaca has none
    before 2016, so training prompts never include it while dev/test prompts do. Either start the
    train split in 2018 or document the gap.

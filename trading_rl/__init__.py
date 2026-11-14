@@ -12,7 +12,8 @@ from .codegen import (describe_exception, extract_function, extract_strategy, fu
                       has_required_functions, strip_thinking, validate_code)
 from .config import (COST_LEVELS, DEFAULT_COSTS, DEV_END, DEV_START, DOW30, EVAL_SYMBOLS, FEEDBACK_YEARS, MAG7,
                      SP100_2022, SYMBOL_ISSUES, SYMBOL_SETS, TEST_END, TEST_START, TRAIN_END, TRAIN_START,
-                     TRAINING_SYMBOLS, UNSEEN_SYMBOLS, usable_symbols)
+                     TEST_SYMBOLS, TRAIN_UNIVERSE, TRAINING_SYMBOLS, UNSEEN_SYMBOLS,
+                     usable_symbols)
 from .evaluate import evaluate_sample, evaluate_symbol, summarize
 from .knowledge import KnowledgeBase
 from .ladder import (LadderConfig, append_csv, build_prompt, dump_prompts, format_report,
@@ -32,7 +33,7 @@ __all__ = [
     'has_required_functions', 'strip_thinking', 'validate_code',
     'COST_LEVELS', 'DEFAULT_COSTS', 'DEV_END', 'DEV_START', 'DOW30', 'EVAL_SYMBOLS', 'FEEDBACK_YEARS', 'MAG7',
     'SP100_2022', 'SYMBOL_ISSUES', 'SYMBOL_SETS', 'TEST_END', 'TEST_START', 'TRAIN_END', 'TRAIN_START',
-    'TRAINING_SYMBOLS', 'UNSEEN_SYMBOLS', 'usable_symbols',
+    'TEST_SYMBOLS', 'TRAIN_UNIVERSE', 'TRAINING_SYMBOLS', 'UNSEEN_SYMBOLS', 'usable_symbols',
     'evaluate_sample', 'evaluate_symbol', 'summarize',
     'KnowledgeBase',
     'LadderConfig', 'append_csv', 'build_prompt', 'dump_prompts', 'format_report',

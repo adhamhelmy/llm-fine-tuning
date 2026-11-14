@@ -244,7 +244,7 @@ class Backtester:
         chunks = [c for c in chunks if len(c)]
         return pd.concat(chunks) if chunks else pd.DataFrame()
 
-    def _fetch_range(self, symbol, start, end, timeframe, attempts=3):
+    def _fetch_range(self, symbol, start, end, timeframe, attempts=4):
         from alpaca.data.enums import Adjustment
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame
@@ -261,7 +261,7 @@ class Backtester:
             except Exception:
                 if attempt == attempts - 1:
                     raise
-                time.sleep(5)
+                time.sleep(5 * 3 ** attempt)   # 5, 15, 45 s: rides out Alpaca's 200 requests/min limit
         if len(df) and isinstance(df.index, pd.MultiIndex):
             df = df.xs(symbol, level='symbol')
         return df
@@ -279,6 +279,28 @@ class Backtester:
                 warn.append(f'unreliable before {known[0]}: {known[1]}')
             print(f"  [{i}/{len(symbols)}] {symbol} " + (f"⚠ {'; '.join(warn)}" if warn else "✓"))
         print(f"Done. {len(Backtester._cache)} entries cached.")
+
+    def clean_symbols(self, symbols, start, end, timeframe='day', verbose=True):
+        """(usable, dropped) for a window: fetches/caches each symbol's bars and drops those that
+        fail to load (unknown ticker), list late, have flat forward-filled stretches
+        (bar_issues) or a known problem in config.SYMBOL_ISSUES. dropped = [(symbol, reason)]."""
+        usable, dropped = [], []
+        symbols = resolve_symbols(symbols)
+        for i, sym in enumerate(symbols, 1):
+            try:
+                issues = bar_issues(self.get_bars(sym, start, end, timeframe), start=start)
+            except Exception as e:
+                issues = [f'{type(e).__name__}: {str(e)[:80]}']
+            known = SYMBOL_ISSUES.get(sym)
+            if known and known[0] > start:
+                issues.append(f'unreliable before {known[0]}')
+            (dropped.append((sym, '; '.join(issues))) if issues else usable.append(sym))
+            if verbose and i % 50 == 0:
+                print(f"  checked {i}/{len(symbols)} symbols ({start} -> {end})", flush=True)
+        if verbose:
+            print(f"{len(usable)}/{len(symbols)} symbols usable for {start} -> {end}; dropped "
+                  f"{len(dropped)}: {', '.join(s for s, _ in dropped) or '-'}")
+        return usable, dropped
 
     # ── backtesting ───────────────────────────────────────────────────────────
 

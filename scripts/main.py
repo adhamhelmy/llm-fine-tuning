@@ -64,6 +64,7 @@ CONFIGS = [
 ]
 
 SPLIT     = 'test'      # 'dev' while experimenting; 'test' only for final numbers
+                       # (dev 2020-21 is inside the final GRPO training window: base models only)
 SYMBOLS   = 'eval'     # 'eval' (DOW30 minus bad-data symbols), 'dow30', 'mag7', 'training', or 'AAPL,MSFT'
 N_SAMPLES = 1          # strategies per (config, symbol)
 OUT_DIR   = os.path.join(REPO, 'ladder_results')
@@ -269,17 +270,17 @@ def compare_models():
 def train_model():
     """GRPO on MODELS[0] with the prompt + context of CONFIGS[0] (needs CUDA)."""
     from trading_rl.model import Unsloth  # must be imported before trl / transformers
-    from trading_rl import (TRAIN_END, TRAIN_START, TRAINING_SYMBOLS, Backtester,
+    from trading_rl import (TEST_SYMBOLS, TRAIN_END, TRAIN_START, TRAIN_UNIVERSE, Backtester,
                             make_strategy_reward, prompt_fn)
     from trading_rl.dataset import build_dataset, train_windows
 
     backend, name, adapter = MODELS[0]
     assert backend == 'unsloth', "training needs an 'unsloth' model"
     backtester = Backtester(verbose=False)
-    windows = train_windows(TRAIN_START, TRAIN_END)    # 2016-19 + its halves; full window first
-    for s, e in windows:
-        backtester.load_bars(TRAINING_SYMBOLS, s, e)
-    dataset = build_dataset(TRAINING_SYMBOLS, prompt_fn=prompt_fn(CONFIGS[0], backtester),
+    windows = train_windows(TRAIN_START, TRAIN_END)    # 2016-21 + its halves (cut from the full window)
+    symbols, _ = backtester.clean_symbols(TRAIN_UNIVERSE, *windows[0])   # ~340 stocks, none in TEST_SYMBOLS
+    assert not set(symbols) & set(TEST_SYMBOLS)
+    dataset = build_dataset(symbols, prompt_fn=prompt_fn(CONFIGS[0], backtester),
                             windows=windows, shuffle_seed=0)
 
     model = Unsloth(model_name=name, max_seq_length=TRAIN_MAX_SEQ, max_prompt_length=TRAIN_MAX_PROMPT,

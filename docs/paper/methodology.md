@@ -28,16 +28,15 @@ lower stages**, not against a weak prompt-only baseline.
 
 ## 3.2 Experimental protocol
 
-**Data.** Daily split- and dividend-adjusted bars from Alpaca's historical data API. The GRPO
-training set uses the 35-symbol `TRAINING_SYMBOLS` on 2016–2019 and on each half of it (105
-prompts). Evaluation uses two stock universes, reported separately and pooled:
+**Data.** Daily split- and dividend-adjusted bars from Alpaca's historical data API.
 
-- *Seen-ticker universe:* the Dow 30 as of 2020-08 – 2024-02 (`config.DOW30`) without DOW
-  (`config.EVAL_SYMBOLS`, 29 stocks). 28 of them are training tickers, though only on 2016–2019.
-- *Unseen-ticker universe:* the S&P 100 constituents of January 2022, the start of the test split
-  (`config.SP100_2022`), minus every training ticker (`config.UNSEEN_SYMBOLS`, 66 stocks).
-  Fixing the list at the start of the test split, rather than using today's index, limits
-  survivorship bias. **[verify the list against an official constituent record]**
+- *Test universe* (`config.TEST_SYMBOLS`, 101 tickers): the S&P 100 plus the Dow 30 as of January
+  2022, the start of the test split. Fixing membership at that date, rather than using today's
+  index, limits survivorship bias. **[verify against an official constituent record]**
+- *Training universe* (`config.TRAIN_UNIVERSE`, ~340 tickers): large- and mid-cap US stocks
+  (mostly S&P 500 members outside the S&P 100) with complete 2016–2021 bars. It is disjoint from
+  the test universe by construction, so **every test stock is unseen in training**. It is not a
+  point-in-time index; it only needs to be liquid US equities.
 
 Alpaca forward-fills inactive tickers with flat, zero-volume bars. Symbols whose bars are missing or
 forward-filled inside a window are therefore excluded and listed per split (`backtest.bar_issues`,
@@ -56,8 +55,8 @@ searched strategies (deflated Sharpe ratio, PBO) applies.
 
 | Split | Window | Use |
 |---|---|---|
-| Train | 2016-01-01 – 2019-12-31 | GRPO training rewards |
-| Dev | 2020-01-01 – 2021-12-31 | selecting the best option at every ladder stage |
+| Train | 2016-01-01 – 2021-12-31 | GRPO training rewards (2016–21 and its halves 2016–18, 2019–21) |
+| Dev | 2020-01-01 – 2021-12-31 | selecting the best option at every ladder stage; then folded into training for the final GRPO run, once every setting was fixed |
 | Test | 2022-01-01 – 2025-12-31 | the reported numbers only; never used for any choice (extended from 2024-12-31 on 2026-11-14, before any alpha-reward result on it was seen) |
 
 **Leakage controls.**
