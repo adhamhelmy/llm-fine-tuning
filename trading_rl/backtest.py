@@ -56,12 +56,15 @@ def jensen_alpha(strategy_values, benchmark_prices, periods_per_year=252.0, min_
     Regresses per-bar strategy returns on per-bar benchmark returns (risk-free rate 0):
         r_p = a + b * r_m + e
     Returns (alpha_pct, beta, alpha_t): `a` annualised (x periods_per_year, in %), `b`, and the
-    t-statistic of `a`. Fewer than `min_periods` returns gives (0.0, 0.0, 0.0).
+    t-statistic of `a`. Fewer than `min_periods` returns gives (0.0, 0.0, 0.0); an equity curve
+    that reaches <= 0 gives (-100.0, 0.0, 0.0).
     """
     import numpy as np
     v = np.asarray(strategy_values, dtype=float)
     m = np.asarray(benchmark_prices, dtype=float)
-    if len(v) != len(m) or len(v) <= min_periods or (v[:-1] <= 0).any() or (m[:-1] <= 0).any():
+    if len(v) and (v <= 0).any():
+        return -100.0, 0.0, 0.0     # account wiped out (e.g. leveraged short): worst alpha, not 0
+    if len(v) != len(m) or len(v) <= min_periods or (m[:-1] <= 0).any():
         return 0.0, 0.0, 0.0
     y, x = v[1:] / v[:-1] - 1, m[1:] / m[:-1] - 1
     ok = np.isfinite(y) & np.isfinite(x)
@@ -283,7 +286,10 @@ class Backtester:
                  commission=0.0, slippage=0.0, detailed=False, plot=False):
         # The Trades/BuySell observers only matter for plots; skipping them speeds up every
         # backtest. AnnualReturn reads the Broker observer, so that one is always added.
-        cerebro = bt.Cerebro(stdstats=plot)
+        # preload=False: bars are loaded one at a time, so a strategy indexing the future
+        # (self.data.close[1]) gets an IndexError instead of tomorrow's price (lookahead).
+        # Same results for honest strategies, ~1.5x slower.
+        cerebro = bt.Cerebro(stdstats=plot, preload=False)
         if not plot:
             cerebro.addobserver(bt.observers.Broker)
         cerebro.broker.setcash(cash)

@@ -113,6 +113,7 @@ Alpaca (historical bars only; paper endpoint `https://paper-api.alpaca.markets`)
   - `scoring.ScoringPool` runs backtests in `python -m trading_rl.scoring` workers and kills/replaces any that overrun `timeout + grace`. Worker crashes become `exception` scores.
   - Pass `pool=` to `score_strategy` / `evaluate_*` / `generate_strategy` / `run_ablation`. `make_strategy_reward` creates one itself (`workers=0` = in-process).
 - `codegen.extract_function` takes the first fenced block containing the class (else the raw text) and cuts at the first non-comment line not indented under the class header. `has_required_functions` uses `ast`, falling back to a regex on syntax errors so they stay `invalid_code`.
+- **Lookahead guards:** cerebro runs with `preload=False`, so `self.data.close[1]` raises IndexError instead of returning tomorrow's bar, and `validate_code` rejects any code containing `dataname` (the pandas frame behind the feed holds the whole window). Both are asserted by the smoke test. Not airtight (stdlib imports and introspection remain), so read the top strategies by hand.
 - `codegen.check_python_modules` is a dependency-free copy of unsloth_zoo's safety check (only stdlib imports allowed). The generated code is still `exec`'d (in a subprocess when pooled), so this is not a real sandbox.
 
 ### Training (GRPO)

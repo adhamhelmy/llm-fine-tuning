@@ -116,7 +116,16 @@ def validate_code(code):
         return info["error"]
     if not ok:
         return f"Imports are not allowed (bt is already available): {', '.join(info['non_stdlib'])}"
+    if _RAW_FEED_RE.search(code):
+        return ("Reading the raw data feed (dataname) is not allowed: it holds every bar of the "
+                "window, including future ones. Use self.data.close[0], [-1], ... and indicators.")
     return None
+
+
+# The pandas frame behind the feed (self.data.p.dataname / _dataname) holds the whole window,
+# so reading it is lookahead. Positive line indices (self.data.close[1]) are blocked at run time
+# instead: the backtester runs with preload=False, so future bars are not loaded yet.
+_RAW_FEED_RE = re.compile(r'dataname')
 
 
 def function_works(code) -> bool:

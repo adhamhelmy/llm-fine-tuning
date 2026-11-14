@@ -143,6 +143,18 @@ a2, b2, t2 = jensen_alpha(boosted, px)
 check("jensen alpha", abs(a0) < 1e-6 and abs(b0 - 1) < 1e-9 and abs(a2 - 0.0004 * 252 * 100) < 5
       and abs(b2 - 1) < 0.01 and t2 > 2 and 0.4 < b1 < 0.6 and jensen_alpha(px[:5], px[:5]) == (0.0, 0.0, 0.0),
       f"a0={a0:.3g} b0={b0:.3g} b1={b1:.3g} a2={a2:.3g} t2={t2:.3g}")
+check("wiped-out account = worst alpha", jensen_alpha(np.r_[px[:100], -1.0, px[:100]], px[:201])[0] == -100.0)
+PEEK = """class Strategy(bt.Strategy):
+    def __init__(self):
+        pass
+    def next(self):
+        if self.data.close[1] > self.data.close[0] and not self.position:
+            self.order_target_percent(target=0.95)
+"""
+pk = tr.score_strategy(PEEK, bt, SYM, START, END)
+raw = tr.score_strategy(PEEK.replace("        pass", "        self.df = self.data.p.dataname"), bt, SYM, START, END)
+check("lookahead blocked", pk.status == 'exception' and 'IndexError' in pk.error
+      and raw.status == 'invalid_code' and 'dataname' in raw.error, f"{pk.status} / {raw.status}")
 check("bh beta ~1", abs(bh.beta - 1) < 0.05 and abs(bh.alpha_pct) < 1, f"beta={bh.beta:.3f} alpha={bh.alpha_pct:.3f}")
 ar = tr.RewardConfig.alpha()
 good_a, bad_a, worse_a = (loser._replace(alpha_pct=v) for v in (12.0, -3.0, -40.0))
