@@ -25,15 +25,20 @@
 3. **Training variety: decided.** `train_windows()` gives 2016–19 plus 2016–17 and 2018–19, i.e.
    35 × 3 = 105 prompts. The halves are cut from the cached full window (`Backtester._from_superset`),
    so they need no extra downloads.
-4. **Market summary in training.** It needs 2 years of bars before the window, and Alpaca has none
+4. **Evaluation breadth: decided (2026-11-14).** Test is now 2022–2025. The universe is
+   `EVAL_SYMBOLS` + `UNSEEN_SYMBOLS` (~94 stocks), with 8 samples per stock. Stats are paired by
+   stock. Similar papers informed this: FINSABER (Li et al. 2025) shows LLM trading claims made on a
+   few hand-picked stocks over short windows collapse on 100+ symbols over 20 years.
+   `SP100_2022` was compiled from memory: verify it before publishing.
+5. **Market summary in training.** It needs 2 years of bars before the window, and Alpaca has none
    before 2016, so training prompts never include it while dev/test prompts do. Either start the
    train split in 2018 or document the gap.
-5. **Sharpe.** backtrader computes Sharpe from **yearly** returns by default, which on these windows
+6. **Sharpe.** backtrader computes Sharpe from **yearly** returns by default, which on these windows
    is 2–3 data points. If you report Sharpe or use it as a reward, set this everywhere:
    ```python
    Backtester(sharpe_kwargs=dict(timeframe=bt.TimeFrame.Days, annualize=True, riskfreerate=0.0))
    ```
-6. **Token budgets.** Training allows about 2k completion tokens, but evaluation uses
+7. **Token budgets.** Training allows about 2k completion tokens, but evaluation uses
    `MAX_NEW_TOKENS = 1536`. Align them if you want train/eval parity.
 
 ## Gotchas to remember

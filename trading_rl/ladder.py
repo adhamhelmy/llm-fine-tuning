@@ -332,8 +332,8 @@ def run_ablation(generate, backtester: Backtester, configs, symbols, start, end,
     done = set()
     if os.path.exists(out_csv):
         prev = read_results(out_csv)
-        done = set(zip(prev['model'], prev['config'], prev['symbol'], prev['start'], prev['sample'],
-                       prev['reward']))
+        done = set(zip(prev['model'], prev['config'], prev['symbol'], prev['start'], prev['end'],
+                       prev['sample'], prev['reward']))
     ctx = _Context(backtester, kb, reward)
     total = len(configs) * len(symbols) * n_samples
     i = 0
@@ -341,7 +341,7 @@ def run_ablation(generate, backtester: Backtester, configs, symbols, start, end,
         for symbol in symbols:
             for sample in range(1, n_samples + 1):
                 i += 1
-                if (model, cfg.name, symbol, start, sample, reward.name) in done:
+                if (model, cfg.name, symbol, start, end, sample, reward.name) in done:
                     continue
                 rec = generate_strategy(generate, cfg, backtester, symbol, start, end,
                                         timeout=timeout, cash=cash, _ctx=ctx, reward=reward, pool=pool)
@@ -350,7 +350,7 @@ def run_ablation(generate, backtester: Backtester, configs, symbols, start, end,
                 print(f"[{i}/{total}] {cfg.name:40.40} {symbol:5} s{sample} -> {rec['status']}"
                       + (f" ({rec['candidates']} cand.)" if rec['candidates'] > 1 else ""))
     df = read_results(out_csv)
-    return df[(df['model'] == model) & (df['start'] == start) & (df['reward'] == reward.name) &
+    return df[(df['model'] == model) & (df['start'] == start) & (df['end'] == end) & (df['reward'] == reward.name) &
               (df['config'].isin([c.name for c in configs]))]
 
 
@@ -368,12 +368,12 @@ def run_ablation_batched(generate_batch, backtester: Backtester, configs, symbol
     done = set()
     if os.path.exists(out_csv):
         prev = read_results(out_csv)
-        done = set(zip(prev['model'], prev['config'], prev['symbol'], prev['start'], prev['sample'],
-                       prev['reward']))
+        done = set(zip(prev['model'], prev['config'], prev['symbol'], prev['start'], prev['end'],
+                       prev['sample'], prev['reward']))
     ctx = _Context(backtester, kb, reward)
     prompts = [build_prompt(cfg, sym, start, end, _ctx=ctx)
                for cfg in configs for sym in symbols for sample in range(1, n_samples + 1)
-               if (model, cfg.name, sym, start, sample, reward.name) not in done]
+               if (model, cfg.name, sym, start, end, sample, reward.name) not in done]
     queue = {}
     if prompts:
         print(f"Generating {len(prompts)} completions in one batch...")

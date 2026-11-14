@@ -28,14 +28,29 @@ lower stages**, not against a weak prompt-only baseline.
 
 ## 3.2 Experimental protocol
 
-**Data.** Daily split- and dividend-adjusted bars from Alpaca's historical data API. Evaluation uses
-a 29-stock US large-cap universe: the Dow 30 as of 2020-08 – 2024-02 (`config.DOW30`) without DOW
-(`config.EVAL_SYMBOLS`). The GRPO training set uses the 35-symbol `TRAINING_SYMBOLS`. Alpaca
-forward-fills inactive tickers with flat, zero-volume bars, so symbols whose bars are missing or
-forward-filled inside any window we use are excluded (`config.SYMBOL_ISSUES`): COIN (no bars before
-its 2021 IPO), NIO (a Nuveen municipal-bond fund's ticker until the 2018 IPO) and DOW (flat from the
-2017 DowDuPont merger to the 2019 spin-off, which covers the dev split's feedback window). All other
-symbols have complete, non-stale bars over 2016–2024 (`backtest.bar_issues`).
+**Data.** Daily split- and dividend-adjusted bars from Alpaca's historical data API. The GRPO
+training set uses the 35-symbol `TRAINING_SYMBOLS` on 2016–2019 and on each half of it (105
+prompts). Evaluation uses two stock universes, reported separately and pooled:
+
+- *Seen-ticker universe:* the Dow 30 as of 2020-08 – 2024-02 (`config.DOW30`) without DOW
+  (`config.EVAL_SYMBOLS`, 29 stocks). 28 of them are training tickers, though only on 2016–2019.
+- *Unseen-ticker universe:* the S&P 100 constituents of January 2022, the start of the test split
+  (`config.SP100_2022`), minus every training ticker (`config.UNSEEN_SYMBOLS`, 66 stocks).
+  Fixing the list at the start of the test split, rather than using today's index, limits
+  survivorship bias. **[verify the list against an official constituent record]**
+
+Alpaca forward-fills inactive tickers with flat, zero-volume bars. Symbols whose bars are missing or
+forward-filled inside a window are therefore excluded and listed per split (`backtest.bar_issues`,
+`symbols_<split>.csv`). This covers COIN (no bars before its 2021 IPO), NIO (a Nuveen municipal-bond
+fund's ticker until the 2018 IPO), DOW (flat from the 2017 DowDuPont merger to the 2019 spin-off)
+and any S&P 100 name delisted inside a window. Excluding delisted names is a residual survivorship
+bias, and we disclose it.
+
+Statistics are paired **by stock** (symbol-level bootstrap CIs, Wilcoxon signed-rank), so the
+number of stocks is the effective sample size. Several samples per stock reduce within-stock noise
+but are not treated as independent. The evaluation is one pre-registered comparison (base vs GRPO
+under a single prompt configuration), so no multiple-testing deflation of the kind used for
+searched strategies (deflated Sharpe ratio, PBO) applies.
 
 **Time splits** (`config.py`). The splits do not overlap and are used for different purposes:
 
@@ -43,7 +58,7 @@ symbols have complete, non-stale bars over 2016–2024 (`backtest.bar_issues`).
 |---|---|---|
 | Train | 2016-01-01 – 2019-12-31 | GRPO training rewards |
 | Dev | 2020-01-01 – 2021-12-31 | selecting the best option at every ladder stage |
-| Test | 2022-01-01 – 2024-12-31 | the reported numbers only; never used for any choice |
+| Test | 2022-01-01 – 2025-12-31 | the reported numbers only; never used for any choice (extended from 2024-12-31 on 2026-11-14, before any alpha-reward result on it was seen) |
 
 **Leakage controls.**
 1. *Feedback window.* Whenever the system uses backtest feedback (the harness dry run, loop
@@ -56,8 +71,8 @@ symbols have complete, non-stale bars over 2016–2024 (`backtest.bar_issues`).
    configuration with the ticker and dates removed from the prompt (`anonymize`). A large drop in
    performance would indicate reliance on memorized hindsight rather than on strategy design.
 
-**Sampling.** Temperature 1.0 and at most 1,536 new tokens. Dev uses 3 samples × 29 symbols = 87 per
-configuration; test uses 5 × 29 = 145 per rung. **[adjust to the final budget]**
+**Sampling.** Temperature 1.0, with the same completion budget as GRPO training (2,047 new
+tokens). Base vs GRPO: 8 samples per (model, stock) on DEV and on TEST.
 
 **Outcome taxonomy** (`rewards.score_strategy`). Every sample gets exactly one status:
 `missing_methods` (no class, or no `__init__`/`next`), `invalid_code` (syntax error or a non-stdlib

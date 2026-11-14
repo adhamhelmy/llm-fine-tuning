@@ -35,8 +35,31 @@ TRAINING_SYMBOLS = [s for s in [x if x != 'INTC' else 'NVDA' for x in DOW30] +
 # summary) is flat for it, so it is dropped everywhere to keep one universe for dev and test.
 EVAL_SYMBOLS = [s for s in DOW30 if s not in SYMBOL_ISSUES]
 
+# S&P 100 constituents at the start of the test split (January 2022), point-in-time to limit
+# survivorship bias; current tickers (META = FB, ELV = ANTM). GOOG is left out (same company as
+# GOOGL). Compiled from memory: check against an official constituent list before publishing.
+SP100_2022 = [
+    'AAPL', 'ABBV', 'ABT',  'ACN',  'ADBE', 'AIG',  'AMGN', 'AMT',  'AMZN', 'AVGO',
+    'AXP',  'BA',   'BAC',  'BIIB', 'BK',   'BKNG', 'BLK',  'BMY',  'BRK.B', 'C',
+    'CAT',  'CHTR', 'CL',   'CMCSA', 'COF', 'COP',  'COST', 'CRM',  'CSCO', 'CVS',
+    'CVX',  'DHR',  'DIS',  'DOW',  'DUK',  'ELV',  'EMR',  'EXC',  'F',    'FDX',
+    'GD',   'GE',   'GILD', 'GM',   'GOOGL', 'GS',  'HD',   'HON',  'IBM',  'INTC',
+    'JNJ',  'JPM',  'KHC',  'KO',   'LIN',  'LLY',  'LMT',  'LOW',  'MA',   'MCD',
+    'MDLZ', 'MDT',  'MET',  'META', 'MMM',  'MO',   'MRK',  'MS',   'MSFT', 'NEE',
+    'NFLX', 'NKE',  'NVDA', 'ORCL', 'PEP',  'PFE',  'PG',   'PM',   'PYPL', 'QCOM',
+    'RTX',  'SBUX', 'SO',   'SPG',  'T',    'TGT',  'TMO',  'TMUS', 'TSLA', 'TXN',
+    'UNH',  'UNP',  'UPS',  'USB',  'V',    'VZ',   'WBA',  'WFC',  'WMT',  'XOM',
+]
+
+# Stocks GRPO never saw: SP100_2022 minus TRAINING_SYMBOLS and SYMBOL_ISSUES. Evaluated next to
+# EVAL_SYMBOLS (28 of whose 29 names are also training symbols, on 2016-19) to test whether the
+# effect carries over to unseen tickers. Run Backtester.load_bars() / bar_issues() first.
+UNSEEN_SYMBOLS = [s for s in SP100_2022 if s not in TRAINING_SYMBOLS and s not in SYMBOL_ISSUES]
+
 SYMBOL_SETS = {
     'eval': EVAL_SYMBOLS,
+    'sp100': SP100_2022,
+    'unseen': UNSEEN_SYMBOLS,
     'dow30': DOW30,            # the index as it was (includes DOW: check SYMBOL_ISSUES)
     'mag7': MAG7,
     'training': TRAINING_SYMBOLS,
@@ -55,7 +78,9 @@ def usable_symbols(symbols, start):
 # Harness/loop feedback always comes from the FEEDBACK_YEARS before the evaluated window.
 TRAIN_START, TRAIN_END = '2016-01-01', '2019-12-31'
 DEV_START, DEV_END = '2020-01-01', '2021-12-31'
-TEST_START, TEST_END = '2022-01-01', '2024-12-31'
+# TEST was extended from 2024-12-31 to 2025-12-31 on 2026-11-14, before any alpha-reward result
+# on TEST was looked at: 4 calendar years / regimes instead of 3.
+TEST_START, TEST_END = '2022-01-01', '2025-12-31'
 FEEDBACK_YEARS = 2
 
 # (commission_bps, slippage_bps) per side. Used by the reward (RewardConfig.costs) and by the
